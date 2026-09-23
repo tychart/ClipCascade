@@ -196,6 +196,10 @@ SESSION_PROBE_TIMEOUT = 5  # seconds allowed for a single session check
 # REST timeout (seconds) for login / metadata / session calls.
 REQUEST_TIMEOUT = 15
 
+# Log file rotation.
+LOG_FILE_MAX_BYTES = 5 * 1024 * 1024
+LOG_FILE_BACKUP_COUNT = 2
+
 # P2P signaling WebSocket keepalive (RFC 6455 ping/pong).
 P2P_WS_PING_INTERVAL_SEC = 25
 P2P_WS_PING_TIMEOUT_SEC = 20

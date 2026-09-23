@@ -102,7 +102,8 @@ class RequestManager:
                 allow_redirects=False,
             )
         except requests.RequestException as e:
-            logging.warning(f"Could not verify the session with {url}: {e}")
+            # Normal while retrying at startup: the caller reports the retry.
+            logging.debug(f"Could not verify the session with {url}: {e}")
             return None
 
         if response.status_code == 200:

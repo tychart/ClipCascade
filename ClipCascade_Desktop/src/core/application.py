@@ -1,6 +1,7 @@
 import logging
 import sys
 import time
+from logging.handlers import RotatingFileHandler
 
 
 from core.constants import *
@@ -30,6 +31,18 @@ else:
     from gui.info import CustomDialog
     from gui.tray import TaskbarPanel
     from gui.message_box import MessageBox
+
+
+class _WebsocketClientNoiseFilter(logging.Filter):
+    """Drop websocket-client's "<error> - goodbye" line.
+
+    The library logs it at ERROR for every failed connection attempt while the
+    reconnect logic reports the same cause itself, so it would otherwise flood
+    the log (and hide real errors) during an outage.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "- goodbye" not in record.getMessage()
 
 
 class Application:
@@ -75,12 +88,27 @@ class Application:
 
     def setup_logging(self):
         LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
-        logging.basicConfig(
-            level=LOG_LEVEL,
-            format=LOG_FORMAT,
-            filename=self.log_file_path,
-            filemode="w",
-        )
+        if LOG_FILE_MAX_BYTES > 0:
+            # Keep the log across restarts (and cap its size) instead of
+            # truncating it on every start, so failures can still be inspected
+            # afterwards.
+            handler = RotatingFileHandler(
+                self.log_file_path,
+                maxBytes=LOG_FILE_MAX_BYTES,
+                backupCount=LOG_FILE_BACKUP_COUNT,
+                encoding="utf-8",
+            )
+            handler.setFormatter(logging.Formatter(LOG_FORMAT))
+            logging.basicConfig(level=LOG_LEVEL, handlers=[handler])
+        else:
+            logging.basicConfig(
+                level=LOG_LEVEL,
+                format=LOG_FORMAT,
+                filename=self.log_file_path,
+                filemode="a",
+                encoding="utf-8",
+            )
+        logging.getLogger("websocket").addFilter(_WebsocketClientNoiseFilter())
 
     def ensure_single_instance(self):
         if PLATFORM == WINDOWS:
