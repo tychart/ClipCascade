@@ -305,7 +305,7 @@ class LoginForm(tk.Tk):
         # Save Password Locally Checkbox
         save_password_label = ttk.Label(
             self.extra_frame,
-            text="Store Password Locally\n(not recommended; \nonly works if encryption is disabled):",
+            text="Store Password Locally\n(not recommended;\nenables automatic login):",
         )
         save_password_label.grid(row=2, column=0, padx=(0, 10), pady=5, sticky=tk.W)
         self.save_password_var = tk.BooleanVar(value=self.config.data["save_password"])
@@ -317,9 +317,12 @@ class LoginForm(tk.Tk):
         self.save_password_checkbox.grid(row=2, column=1, padx=10, pady=5, sticky=tk.W)
         self._add_tooltip(
             [save_password_label, self.save_password_checkbox],
-            "Stores your plain password locally for automatic login convenience.\n\n"
+            "Stores your credentials locally so ClipCascade can log in again on its own.\n\n"
             "Security trade-off: avoid this on shared or untrusted machines.\n"
-            "This only works when encryption is disabled.",
+            "The stored value is a one-way SHA3-512 hash of your password, never the "
+            "password itself, but it is enough to log in, so keep the DATA file private.\n"
+            "Works with or without encryption: your encryption key is derived once and "
+            "stored separately, so you will not be asked for the password again.",
         )
 
         # Maximum Clipboard Size - Local Limit

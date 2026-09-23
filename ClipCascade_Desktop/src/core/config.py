@@ -2,7 +2,22 @@ import base64
 import json
 import os
 import re
+import stat
 from core.constants import *
+
+
+def restrict_file_permissions(path: str) -> None:
+    """Best effort: keep the data file readable by its owner only.
+
+    When "save_password" is enabled the file holds a password-equivalent hash
+    (and always holds the encryption key), so it should not be world-readable.
+    """
+    if PLATFORM == WINDOWS:
+        return
+    try:
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    except OSError as e:
+        logging.warning(f"Could not restrict permissions on {path}: {e}")
 
 
 class Config:
@@ -43,6 +58,7 @@ class Config:
                 ).decode("utf-8")
             with open(self.file_name, "w") as f:
                 json.dump(temp, f, indent=4)
+            restrict_file_permissions(self.file_name)
         except Exception as e:
             logging.error(f"Failed to save data: {e}")
 
@@ -55,6 +71,8 @@ class Config:
                 with open(self.file_name, "r") as f:
                     file_data = json.load(f)
                     self.data.update(file_data)
+                # Data files created by older versions can be world-readable.
+                restrict_file_permissions(self.file_name)
                 # Decode hashed_password if present
                 if self.data.get("hashed_password"):
                     self.data["hashed_password"] = base64.b64decode(

@@ -1,5 +1,7 @@
 import json
 import logging
+from typing import Optional
+
 import requests
 from core.constants import *
 from core.config import Config
@@ -29,6 +31,7 @@ class RequestManager:
             response = session.get(
                 self.config.data["server_url"] + LOGIN_URL,
                 verify=self._verify(),
+                timeout=REQUEST_TIMEOUT,
             )
 
             if response.status_code != 200:
@@ -49,6 +52,7 @@ class RequestManager:
                 self.config.data["server_url"] + LOGIN_URL,
                 data=form_data,
                 verify=self._verify(),
+                timeout=REQUEST_TIMEOUT,
             )
             if (
                 response.status_code == 200
@@ -67,6 +71,48 @@ class RequestManager:
             msg = f"An error occurred during login: {e}"
             logging.error(msg)
             return False, msg, None
+
+    def session_is_valid(self, timeout: int = REQUEST_TIMEOUT) -> Optional[bool]:
+        """
+        Ask the server whether the stored session cookie is still accepted.
+
+        This distinguishes "the server rejected our session" (the user has to
+        authenticate again) from "the server is unreachable" (keep retrying),
+        which the WebSocket layer alone cannot tell apart.
+
+        Returns:
+            True  - the server accepts the session.
+            False - the server rejected it (redirect to the login page, 401 or 403).
+            None  - the server could not be reached; validity is unknown.
+        """
+        if not self.config.data.get("cookie"):
+            return False
+
+        url = self.config.data["server_url"] + CSRF_URL
+        try:
+            response = requests.get(
+                url,
+                headers={
+                    "Cookie": RequestManager.format_cookie(self.config.data["cookie"])
+                },
+                verify=self._verify(),
+                timeout=timeout,
+                # Do not follow the redirect to the login page: the redirect
+                # itself is the signal that the session is no longer valid.
+                allow_redirects=False,
+            )
+        except requests.RequestException as e:
+            logging.warning(f"Could not verify the session with {url}: {e}")
+            return None
+
+        if response.status_code == 200:
+            return True
+        if response.status_code in (401, 403) or 300 <= response.status_code < 400:
+            return False
+        logging.warning(
+            f"Unexpected response while verifying the session: {response.status_code}"
+        )
+        return None
 
     def maxsize(self) -> int:
         try:
@@ -173,12 +219,19 @@ class RequestManager:
             return ""
 
     @staticmethod
-    def get(url: str, headers: dict = None, verify=True) -> requests.Response:
+    def get(
+        url: str,
+        headers: dict = None,
+        verify=True,
+        timeout: int = REQUEST_TIMEOUT,
+    ) -> requests.Response:
         """
         A generic GET mapper for handling GET requests.
         """
         try:
-            response = requests.get(url, headers=headers, verify=verify)
+            response = requests.get(
+                url, headers=headers, verify=verify, timeout=timeout
+            )
             response.raise_for_status()  # Will raise an HTTPError if the HTTP request returned an unsuccessful status code
             return response
         except Exception as e:
@@ -187,13 +240,19 @@ class RequestManager:
 
     @staticmethod
     def post(
-        url: str, data: dict, headers: dict = None, verify=True
+        url: str,
+        data: dict,
+        headers: dict = None,
+        verify=True,
+        timeout: int = REQUEST_TIMEOUT,
     ) -> requests.Response:
         """
         A generic POST mapper for handling POST requests.
         """
         try:
-            response = requests.post(url, data=data, headers=headers, verify=verify)
+            response = requests.post(
+                url, data=data, headers=headers, verify=verify, timeout=timeout
+            )
             response.raise_for_status()  # Will raise an HTTPError if the HTTP request returned an unsuccessful status code
             return response
         except Exception as e:

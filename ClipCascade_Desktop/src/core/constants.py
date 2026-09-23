@@ -179,6 +179,23 @@ elif PLATFORM.startswith(LINUX):
 RECONNECT_WS_TIMER = 10  # seconds
 WEBSOCKET_TIMEOUT = 3000  # milliseconds
 
+# Startup reconnect (before the first successful login).
+# A stored session cookie is normally valid for a long time, so a transient
+# failure at startup (DNS not ready yet, Wi-Fi still associating, server being
+# restarted) must not send the user back to the login form. Retry with a capped
+# backoff and only ask for credentials when the server rejects the session.
+STARTUP_RECONNECT_INITIAL_DELAY = 2  # seconds before the 2nd attempt
+STARTUP_RECONNECT_BACKOFF_FACTOR = 2
+STARTUP_RECONNECT_MAX_DELAY = 30  # seconds (backoff cap)
+STARTUP_RECONNECT_NOTIFY_AFTER = 20  # seconds of retrying before notifying the user
+
+# Session re-validation after the initial login (server/proxy restarts).
+SESSION_PROBE_MIN_INTERVAL = 60  # seconds between two session checks
+SESSION_PROBE_TIMEOUT = 5  # seconds allowed for a single session check
+
+# REST timeout (seconds) for login / metadata / session calls.
+REQUEST_TIMEOUT = 15
+
 # P2P signaling WebSocket keepalive (RFC 6455 ping/pong).
 P2P_WS_PING_INTERVAL_SEC = 25
 P2P_WS_PING_TIMEOUT_SEC = 20

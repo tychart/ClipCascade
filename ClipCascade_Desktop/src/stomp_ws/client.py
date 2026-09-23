@@ -27,6 +27,11 @@ class Client:
 
         self.connected = False
 
+        # Last error reported by the WebSocket layer (e.g. DNS failure or a
+        # rejected handshake). Used to fail fast instead of waiting for the
+        # whole timeout when the connection cannot be established at all.
+        self.error = None
+
         self.counter = 0
         self.subscriptions = {}
 
@@ -45,6 +50,10 @@ class Client:
 
         total_ms = 0
         while self.opened is False:
+            if self.error is not None:
+                raise ConnectionError(
+                    f"Connection to {self.url} failed: {self.error}"
+                )
             time.sleep(0.25)
             total_ms += 250
             if 0 < timeout < total_ms:
@@ -61,6 +70,7 @@ class Client:
         self._clean_up()
 
     def _on_error(self, ws_app, error, *args):
+        self.error = error
         logging.debug(error)
 
     def _on_message(self, ws_app, message, *args):

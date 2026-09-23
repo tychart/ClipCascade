@@ -43,6 +43,7 @@ class P2PManager(WSInterface):
         self.disconnected = False
         self.is_auto_reconnecting = False
         self._suppress_auto_reconnect_once = False
+        self.relogin_callback = None
         self.is_clipboard_monitoring_on = False
 
         # Fragment variables
@@ -221,6 +222,11 @@ class P2PManager(WSInterface):
                     message="Check your internet connection. Retrying...",
                 )
                 self.first_conn_lost = False
+            if self.relogin_callback is not None:
+                try:
+                    self.relogin_callback()
+                except Exception as e:
+                    logging.error(f"Re-authentication before reconnect failed: {e}")
             time.sleep(RECONNECT_WS_TIMER)  # seconds
             self.connect()
 

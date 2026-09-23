@@ -32,6 +32,7 @@ class STOMPManager(WSInterface):
         self.is_connected = False
         self.disconnected = False
         self.is_auto_reconnecting = False
+        self.relogin_callback = None
 
     def set_tray_ref(self, sys_tray: TaskbarPanel):
         """
@@ -102,6 +103,11 @@ class STOMPManager(WSInterface):
                     message="Check your internet connection. Retrying...",
                 )
                 self.first_conn_lost = False
+            if self.relogin_callback is not None:
+                try:
+                    self.relogin_callback()
+                except Exception as e:
+                    logging.error(f"Re-authentication before reconnect failed: {e}")
             time.sleep(RECONNECT_WS_TIMER)  # seconds
             self.connect()
 
