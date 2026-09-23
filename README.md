@@ -608,6 +608,18 @@ sudo nohup python3 main.py &> /dev/null &
 
 To ensure ClipCascade starts automatically when your system boots, modify the file paths as necessary and add the appropriate command to your startup script.
 
+##### systemd (recommended on most distributions)
+
+A ready-to-edit user unit is provided in [`ClipCascade_Desktop/contrib/systemd/clipcascade.service`](ClipCascade_Desktop/contrib/systemd/clipcascade.service). Adjust the two paths in `ExecStart` to point at your `python` and `main.py`, then:
+
+```
+cp ClipCascade_Desktop/contrib/systemd/clipcascade.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now clipcascade.service
+```
+
+The unit is bound to `graphical-session.target` (the tray needs the graphical session) and is stopped together with it on logout/shutdown. It restarts the client if it crashes, but not after a deliberate *Quit* / *Logoff and Quit* from the tray menu; use `systemctl --user stop clipcascade` to stop it for good.
+
 ##### Example:
 ##### GUI
 ```
@@ -1075,8 +1087,8 @@ Defines the STOMP broker password for external message handling.
   
 #### Extra Config/Advanced Settings (Desktop/Mobile):
 - **Maximum Clipboard Size Local Limit (in bytes)**: If the app crashes or stops unexpectedly, it may be due to receiving clipboard content exceeding the platform's maximum size limit. You can set a local size limit by specifying a value in bytes (e.g., 512 KiB = 524288 bytes) to test different thresholds suitable for your device. This local limit works alongside the server-specified limit to ensure smoother operation without crashes. For example, on Android (particularly on the Pixel 6a as of 2024), the platform limit(for text) is typically less than 1 MiB. Since the server limit cannot go below 1 MiB, setting the local limit to around 900,000 bytes on the Pixel 6a can help prevent crashes.
-- **Store Password Locally (not recommended)**: Enable this option if you frequently encounter session logouts. While the app stores session cookies for an extended period, a server restart may prompt a re-login. If re-entering the password becomes tedious, you can use this option to store your password locally for convenience.
-   > Note: This option will only work if encryption is disabled, as encryption requires the raw password to generate a password hash.
+- **Store Password Locally (not recommended)**: Enable this option if you frequently encounter session logouts. The app keeps a session cookie for a long time, but a server/reverse-proxy restart or an expired session can still require a login; with this option enabled ClipCascade re-authenticates on its own instead of showing the login form. Only a one-way SHA3-512 hash of the password is written to the `DATA` file, never the password itself, but that hash is enough to log in, so keep `DATA` private (it is written with `0600` permissions on Linux/macOS).
+   > This option works with encryption enabled: the encryption key is derived once and stored separately, so the raw password is not needed again.
 - **Enable Image Sharing and Enable File Sharing**: Enabling these options allows the app to send images or files. However, the app will continue to receive images and files even if these options are disabled.
 - **Enable Notification**: Turn on this option to receive notifications about WebSocket disconnections and reconnections.
 - **Enable Encryption (recommended)**: Enabling this option activates end-to-end encryption for clipboard data. This ensures that all clipboard content is encrypted before leaving your device. Refer to the section below on E2E encryption for detailed instructions on how it works and how to configure the `salt` and `hash rounds`.
