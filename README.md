@@ -503,6 +503,58 @@ sudo pacman -S --noconfirm ffmpeg
 ```
 
 
+#### Step 4.3: Install everything with `uv` (alternative to Steps 4–4.2)
+
+[`uv`](https://docs.astral.sh/uv/) creates and manages its own virtual environment, so nothing is installed into the system interpreter: no `sudo pip`, no `externally-managed-environment` workaround, and your system's Python version no longer has to match what the dependencies need. Steps 1–3 still apply, since they install system libraries (clipboard tools, GTK, the GNOME tray extension) rather than Python packages.
+
+The GUI tray additionally needs PyGObject, the one dependency that has no wheel on PyPI and therefore has to be compiled. Install its build dependencies once:
+
+##### Fedora:
+```
+sudo dnf install -y gobject-introspection-devel cairo-gobject-devel
+```
+
+##### Debian/Ubuntu:
+```
+sudo apt install -y pkg-config libcairo2-dev libgirepository1.0-dev
+```
+(swap `libgirepository1.0-dev` for `libgirepository-2.0-dev` on releases that no longer ship the 1.0 development files)
+
+##### Arch:
+```
+sudo pacman -S --noconfirm pkgconf gobject-introspection cairo
+```
+
+Then, from the folder containing `main.py`:
+
+```
+# Install uv, if you do not have it yet (Fedora also packages it: sudo dnf install uv)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create the environment and install ClipCascade plus the GUI tray
+uv sync --extra tray
+
+# Run it
+uv run main.py --gui true                 # GUI / tray
+uv run main.py --gui false --xmode false  # terminal CLI on Wayland
+```
+
+`uv sync` reads `pyproject.toml`, installs every dependency, and installs a suitable Python itself when your system one does not satisfy the pins (they need 3.9 or newer). It writes a local `uv.lock` (kept out of the repository, like the rest of the environment files), so re-running `uv sync` after a `git pull` reproduces the same environment. Use `uv sync --extra tray` for the GUI; a plain `uv sync` skips the tray build. If PyGObject fails to build, drop `--extra tray`: the client still runs and syncs the clipboard, but the tray icon has no menu and the log says why (see the note under Step 7).
+
+For the systemd unit in Step 7, point `ExecStart` at the generated environment instead of the system interpreter:
+
+```
+ExecStart=%h/path/to/ClipCascade_Desktop/src/.venv/bin/python %h/path/to/ClipCascade_Desktop/src/main.py --gui true
+```
+
+If you are working from a tree that has no `pyproject.toml`, the equivalent with `uv` alone is:
+
+```
+uv venv
+uv pip install -r requirements_linux.txt -r requirements_linux_gui.txt
+```
+
+
 #### Step 5: Run the Application
 
 Start ClipCascade by running (use sudo if needed):
