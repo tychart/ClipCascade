@@ -6,3 +6,4 @@ dist/
 *.spec.bak
 .venv/
 uv.lock
+clipcascade.lock
