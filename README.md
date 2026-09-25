@@ -620,6 +620,23 @@ systemctl --user enable --now clipcascade.service
 
 The unit is bound to `graphical-session.target` (the tray needs the graphical session) and is stopped together with it on logout/shutdown. It restarts the client if it crashes, but not after a deliberate *Quit* / *Logoff and Quit* from the tray menu; use `systemctl --user stop clipcascade` to stop it for good.
 
+The tray icon itself needs PyGObject (`gi`), which `pystray` uses for its AppIndicator backend. When the environment running the client does not provide it, `pystray` falls back to its legacy X11 backend without saying so: the icon is then a raw X11 window that has no menu, so clicking it does nothing and it may be drawn at the wrong size. The client logs an error naming the fallback backend in this case. PyGObject is also what the Wayland clipboard monitor uses (`clipboard/clipboard_monitor_linux.py`), so without it the client logs `Failed to start clipboard monitor` and falls back to polling the XWayland server. PyGObject has no wheel for `uv`-managed interpreters, so install its build dependencies first (Fedora example):
+
+```
+sudo dnf install gobject-introspection-devel cairo-gobject-devel
+uv pip install --python /path/to/venv/bin/python pygobject
+# or, without uv: /path/to/venv/bin/pip install pygobject
+```
+
+With `uv sync`, the same dependency is available as the `tray` extra: `uv sync --extra tray`.
+
+To check an environment afterwards, the interpreter that runs the client should resolve pystray to the AppIndicator backend rather than `_xorg`:
+
+```
+/path/to/venv/bin/python -c "import pystray; print(pystray.Icon)"
+# <class 'pystray._appindicator.Icon'>
+```
+
 ##### Example:
 ##### GUI
 ```

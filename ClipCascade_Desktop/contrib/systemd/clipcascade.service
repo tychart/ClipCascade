@@ -18,6 +18,17 @@
 #     session instead of being restarted while the session shuts down.
 #   * Restart=on-failure (rather than always) keeps a deliberate "Quit" or
 #     "Logoff and Quit" from the tray menu working.
+#   * The tray icon needs PyGObject ("gi"), which pystray uses for the
+#     AppIndicator backend; the Wayland clipboard monitor uses it too. Without
+#     it pystray silently falls back to its legacy X11 backend: the icon is a
+#     raw X11 window that cannot open a menu, so clicking it does nothing.
+#     On Fedora, where PyGObject is not published as a wheel:
+#         sudo dnf install gobject-introspection-devel cairo-gobject-devel
+#         uv pip install --python <venv>/bin/python pygobject
+#     The client logs an error naming the fallback backend when this is
+#     missing. To check an environment, this should print
+#     "<class 'pystray._appindicator.Icon'>":
+#         <venv>/bin/python -c "import pystray; print(pystray.Icon)"
 
 [Unit]
 Description=ClipCascade clipboard sync
