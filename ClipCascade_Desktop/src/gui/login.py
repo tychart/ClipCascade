@@ -1,10 +1,11 @@
 import re
 import tkinter as tk
-from tkinter import ttk, font
+from tkinter import ttk
 import gc
 import time
 import os
 
+from utils.fonts import ui_font
 from utils.window_manager import center_window
 from core.config import Config
 from gui.info import CustomDialog
@@ -43,7 +44,7 @@ class HoverTooltip:
             borderwidth=1,
             background="#ffffe0",
             foreground="#202020",
-            font=("Helvetica", 10),
+            font=ui_font(10, master=self.widget),
             wraplength=self.wraplength,
             padx=8,
             pady=6,
@@ -84,10 +85,10 @@ class LoginForm(tk.Tk):
         # Configure styles
         style = ttk.Style(self)
         # Use default theme (may vary by OS); consider 'clam', 'alt', or 'default'
-        style.configure("TLabel", font=("Helvetica", 13), padding=5)
-        style.configure("TEntry", font=("Helvetica", 13), padding=5)
-        style.configure("TButton", font=("Helvetica", 13), padding=5)
-        style.configure("TCheckbutton", font=("Helvetica", 13), padding=5)
+        style.configure("TLabel", font=ui_font(13, master=self), padding=5)
+        style.configure("TEntry", font=ui_font(13, master=self), padding=5)
+        style.configure("TButton", font=ui_font(13, master=self), padding=5)
+        style.configure("TCheckbutton", font=ui_font(13, master=self), padding=5)
 
         # Main frame with padding
         main_frame = ttk.Frame(self, padding=20)
@@ -97,7 +98,7 @@ class LoginForm(tk.Tk):
         title_label = ttk.Label(
             main_frame,
             text="Please Log In",
-            font=("Helvetica", 16, "bold"),
+            font=ui_font(16, weight="bold", master=self),
             takefocus=False,
         )
         title_label.pack(pady=(0, 10))
@@ -109,7 +110,7 @@ class LoginForm(tk.Tk):
         # Username
         user_label = ttk.Label(self.field_frame, text="Username:")
         user_label.grid(row=0, column=0, padx=(0, 10), pady=5, sticky=tk.W)
-        self.username_entry = ttk.Entry(self.field_frame, width=50, font=("Helvetica", 13))
+        self.username_entry = ttk.Entry(self.field_frame, width=50, font=ui_font(13, master=self))
         self.username_entry.insert(0, self.config.data["username"])
         self.username_entry.grid(row=0, column=1, padx=10, pady=5, sticky=tk.W + tk.E)
         self._add_tooltip(
@@ -124,7 +125,7 @@ class LoginForm(tk.Tk):
         self.password_frame = ttk.Frame(self.field_frame)
         self.password_frame.grid(row=1, column=1, padx=10, pady=5, sticky=tk.W + tk.E)
         self.password_entry = ttk.Entry(
-            self.password_frame, show="*", width=47, font=("Helvetica", 13)
+            self.password_frame, show="*", width=47, font=ui_font(13, master=self)
         )
         self.password_entry.insert(0, self.config.data["password"])
         self.password_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -144,7 +145,7 @@ class LoginForm(tk.Tk):
         # Server URL
         server_label = ttk.Label(self.field_frame, text="Server URL:")
         server_label.grid(row=2, column=0, padx=(0, 10), pady=5, sticky=tk.W)
-        self.server_url_entry = ttk.Entry(self.field_frame, width=50, font=("Helvetica", 13))
+        self.server_url_entry = ttk.Entry(self.field_frame, width=50, font=ui_font(13, master=self))
         self.server_url_entry.insert(0, self.config.data["server_url"])
         self.server_url_entry.grid(row=2, column=1, padx=10, pady=5, sticky=tk.W + tk.E)
         self._add_tooltip(
@@ -215,7 +216,7 @@ class LoginForm(tk.Tk):
             text="Hide Extra Config" if PLATFORM == MACOS else "Enable Extra Config",
             fg=self.toggle_normal_color,
             cursor="hand2",
-            font=font.Font(family="Helvetica", size=13, underline=True),
+            font=ui_font(13, underline=True, master=self),
             takefocus=False,
         )
         self.toggle_label.pack(pady=(5, 10))
@@ -276,7 +277,9 @@ class LoginForm(tk.Tk):
         # Hash Rounds
         hash_rounds_label = ttk.Label(self.extra_frame, text="Hash Rounds:")
         hash_rounds_label.grid(row=0, column=0, padx=(0, 10), pady=5, sticky=tk.W)
-        self.hash_rounds_entry = ttk.Entry(self.extra_frame, width=50, font=("Helvetica", 13))
+        self.hash_rounds_entry = ttk.Entry(
+            self.extra_frame, width=50, font=ui_font(13, master=self)
+        )
         self.hash_rounds_entry.insert(0, str(self.config.data["hash_rounds"]))
         self.hash_rounds_entry.grid(row=0, column=1, padx=10, pady=5, sticky=tk.W + tk.E)
         self._add_tooltip(
@@ -290,7 +293,7 @@ class LoginForm(tk.Tk):
         # Salt
         salt_label = ttk.Label(self.extra_frame, text="Salt:")
         salt_label.grid(row=1, column=0, padx=(0, 10), pady=5, sticky=tk.W)
-        self.salt_entry = ttk.Entry(self.extra_frame, width=50, font=("Helvetica", 13))
+        self.salt_entry = ttk.Entry(self.extra_frame, width=50, font=ui_font(13, master=self))
         self.salt_entry.insert(0, self.config.data["salt"])
         self.salt_entry.grid(row=1, column=1, padx=10, pady=5, sticky=tk.W + tk.E)
         self._add_tooltip(
@@ -331,7 +334,7 @@ class LoginForm(tk.Tk):
         )
         local_clipboard_size_label.grid(row=3, column=0, padx=(0, 10), pady=5, sticky=tk.W)
         self.local_clipboard_size_entry = ttk.Entry(
-            self.extra_frame, width=50, font=("Helvetica", 13)
+            self.extra_frame, width=50, font=ui_font(13, master=self)
         )
         self.local_clipboard_size_entry.insert(
             0, str(self.config.data["max_clipboard_size_local_limit_bytes"] or "")
@@ -388,7 +391,7 @@ class LoginForm(tk.Tk):
             row=6, column=0, padx=(0, 10), pady=5, sticky=tk.W
         )
         self.default_file_download_location_entry = ttk.Entry(
-            self.extra_frame, width=50, font=("Helvetica", 13)
+            self.extra_frame, width=50, font=ui_font(13, master=self)
         )
         self.default_file_download_location_entry.insert(
             0, self.config.data["default_file_download_location"]
@@ -410,7 +413,7 @@ class LoginForm(tk.Tk):
         ssl_ca_label = ttk.Label(self.extra_frame, text="SSL CA bundle (optional):")
         ssl_ca_label.grid(row=7, column=0, padx=(0, 10), pady=5, sticky=tk.W)
         self.ssl_ca_bundle_entry = ttk.Entry(
-            self.extra_frame, width=50, font=("Helvetica", 13)
+            self.extra_frame, width=50, font=ui_font(13, master=self)
         )
         self.ssl_ca_bundle_entry.insert(
             0, self.config.data.get("ssl_ca_bundle") or ""
