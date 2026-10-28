@@ -1095,7 +1095,7 @@ Defines the STOMP broker password for external message handling.
 * * * * * * *
 
 ### 🖥️📱 Client Apps
-- Logs (`clipcascade_log.log`) are stored in the installation directory on Windows and Linux, and in `<current user>/Library/Application Support/ClipCascade/` on macOS. These logs allow you to review application activity and are automatically reset each time the application is reopened, preventing indefinite growth.
+- Logs (`clipcascade_log.log`) are stored in the installation directory on Windows and Linux, and in `<current user>/Library/Application Support/ClipCascade/` on macOS. These logs allow you to review application activity and are rotated (5 MiB per file, 2 older files kept) so recent history is preserved without growing indefinitely.
 - The `DATA` file stores settings and user details, enabling the app to retain this information across both restarts and updates.
 - On Linux and macOS, ClipCascade holds an operating-system lock on `ClipCascade.lock` to allow only one instance at a time. The file remains after exit; the lock is released when the process exits, including after a crash.
 - Desktop and Android check for updates at startup and once a day while running, retrying failed checks after an hour. Update status remains visible in the tray/menu or Android home screen. Alerts appear once per new version each app session; Android uses a popup while the app is active or a notification in the background.
