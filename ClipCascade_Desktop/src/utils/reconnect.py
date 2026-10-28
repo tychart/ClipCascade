@@ -9,6 +9,22 @@ from core.constants import (
 
 
 class ReconnectMixin:
+    # Optional callable set by the application; invoked before every automatic
+    # reconnect attempt so the session can be refreshed before retrying.
+    relogin_callback = None
+
+    def set_relogin_callback(self, callback):
+        """Register a callable invoked before every automatic reconnect attempt.
+
+        The application uses this to re-authenticate when the server has
+        invalidated the stored session (for example after a server or reverse
+        proxy restart), so the connection recovers without user interaction.
+        It belongs here, on the mixin, because the retry worker runs on the
+        outermost manager (today ``utils/transport_manager.TransportManager``,
+        which delegates the inner managers' retries to itself).
+        """
+        self.relogin_callback = callback
+
     def _init_reconnect(self):
         self._connect_lock = threading.Lock()
         self._retry_lock = threading.Lock()
@@ -62,6 +78,7 @@ class ReconnectMixin:
                     if self.disconnected or self.is_connected:
                         break
                     self._reconnect_attempts += 1
+                self._before_reconnect()
                 try:
                     self.connect()
                 except Exception:
@@ -73,6 +90,21 @@ class ReconnectMixin:
             # Cover a close arriving as the successful worker was exiting.
             if not self.disconnected and not self.is_connected:
                 self._start_reconnect()
+
+    def _before_reconnect(self):
+        """Hook run before every automatic reconnect attempt.
+
+        The application registers ``relogin_callback`` so a session the server
+        invalidated (proxy restart, expiry) is refreshed before retrying; the
+        probe is throttled and never raises, so it cannot stall the worker.
+        """
+        callback = getattr(self, "relogin_callback", None)
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            logging.exception("Re-authentication before reconnect failed")
 
     def _stop_reconnect(self):
         with self._retry_lock:
