@@ -2,10 +2,31 @@ import base64
 import json
 import os
 import re
+import stat
 import tempfile
 import uuid
 from core.constants import *
 from utils import secret_storage
+
+
+def restrict_file_permissions(path: str) -> None:
+    """Best effort: fix a data file left world-readable by an older version.
+
+    `save()` has always written through a temporary file, which is created as
+    0600, so files this client writes are already private. A `DATA` file from
+    3.2.x/3.3.x was written with a plain `open(..., "w")` (0644 under the usual
+    umask) and only gets replaced on the next successful save - which never
+    happens when the client cannot save (locked credential store, read-only
+    install). Tightening it on load closes that gap: the file holds the
+    encryption key and, when "save_password" is enabled, a password-equivalent
+    hash.
+    """
+    if PLATFORM == WINDOWS:
+        return
+    try:
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    except OSError as e:
+        logging.warning(f"Could not restrict permissions on {path}: {e}")
 
 
 class Config:
@@ -219,6 +240,8 @@ class Config:
         if os.path.isfile(self.file_name):
             try:
                 with open(self.file_name, "r") as f:
+                    # Data files created by older versions can be world-readable.
+                    restrict_file_permissions(self.file_name)
                     file_data = json.load(f)
                 self._secret_ref = file_data.pop("secret_ref", None)
                 reading_keyring = self.credentials_use_keyring
