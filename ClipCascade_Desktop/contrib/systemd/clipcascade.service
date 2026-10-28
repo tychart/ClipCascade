@@ -1,0 +1,41 @@
+# ClipCascade - systemd user unit
+#
+# Install:
+#   1. Adjust the paths below (or use a wrapper script) and rename nothing.
+#   2. cp clipcascade.service ~/.config/systemd/user/
+#   3. systemctl --user daemon-reload
+#   4. systemctl --user enable --now clipcascade.service
+#
+# Notes:
+#   * Drop --gui true (or set it to false) to use the terminal based client.
+#   * --xmode true forces the X11/XWayland clipboard path (xclip), which is
+#     useful on Wayland desktops where the Wayland clipboard implementation is
+#     not wanted.
+#   * graphical-session.target is reached before the network is fully
+#     configured. The client retries the stored session instead of falling back
+#     to the login form, so no network ordering is required here.
+#   * PartOf= makes sure the client is stopped together with the graphical
+#     session instead of being restarted while the session shuts down.
+#   * Restart=on-failure (rather than always) keeps a deliberate "Quit" or
+#     "Logoff and Quit" from the tray menu working.
+
+[Unit]
+Description=ClipCascade clipboard sync
+Documentation=https://github.com/Sathvik-Rao/ClipCascade
+PartOf=graphical-session.target
+After=graphical-session.target
+Wants=graphical-session.target
+# Tolerate transient hiccups, but do not keep respawning a crash-looping
+# process.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# Adjust to the directory that contains main.py.
+ExecStart=%h/.local/share/ClipCascade/.venv/bin/python %h/.local/share/ClipCascade/main.py --gui true
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target
