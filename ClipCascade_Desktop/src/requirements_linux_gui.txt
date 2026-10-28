@@ -10,3 +10,8 @@ beautifulsoup4==4.12.3
 aiortc==1.10.0; python_version < "3.14"
 aiortc==1.14.0; python_version >= "3.14"
 av>=16.0.0,<17; python_version >= "3.14"
+# pystray needs PyGObject for the AppIndicator tray backend. Without it the
+# tray falls back to its legacy X11 backend, which has no menu. Building
+# PyGObject needs system headers, e.g. on Fedora:
+#   sudo dnf install gobject-introspection-devel cairo-gobject-devel
+PyGObject>=3.42
