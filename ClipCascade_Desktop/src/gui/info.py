@@ -4,6 +4,7 @@ from tkinter import scrolledtext
 import gc
 import time
 
+from utils.fonts import ui_font
 from utils.window_manager import center_window
 from core.constants import *
 
@@ -19,10 +20,10 @@ class CustomDialog(tk.Tk):
         self.style = ttk.Style(self)
         self.style.configure("TFrame", background="#f2f2f2")
         self.style.configure(
-            "TLabel", background="#f2f2f2", foreground="#333333", font=("Arial", 11)
+            "TLabel", background="#f2f2f2", foreground="#333333", font=ui_font(11, master=self)
         )
-        self.style.configure("Header.TLabel", font=("Arial", 14, "bold"))
-        self.style.configure("TButton", font=("Arial", 11))
+        self.style.configure("Header.TLabel", font=ui_font(14, weight="bold", master=self))
+        self.style.configure("TButton", font=ui_font(11, master=self))
 
         self._configure_window()
         self._show_dialog()
@@ -71,7 +72,7 @@ class CustomDialog(tk.Tk):
         title_frame.pack(pady=(0, 10), fill="x")
 
         symbol_label = ttk.Label(
-            title_frame, text=symbol, font=("Arial", 18, "bold"), foreground=color
+            title_frame, text=symbol, font=ui_font(18, weight="bold", master=self), foreground=color
         )
         symbol_label.pack(side="left", padx=(0, 10))
 
@@ -84,7 +85,7 @@ class CustomDialog(tk.Tk):
 
         # ScrolledText widget for the message
         self.text_widget = scrolledtext.ScrolledText(
-            message_frame, wrap="word", font=("Arial", 11), width=70, height=8
+            message_frame, wrap="word", font=ui_font(11, master=self), width=70, height=8
         )
         self.text_widget.pack(fill="both", expand=True)
 
