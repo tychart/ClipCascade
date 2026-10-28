@@ -2,8 +2,23 @@ import base64
 import json
 import os
 import re
+import stat
 import tempfile
 from core.constants import *
+
+
+def restrict_file_permissions(path: str) -> None:
+    """Best effort: keep the data file readable by its owner only.
+
+    The file always holds the encryption key and, when "save_password" is
+    enabled, a password-equivalent hash, so it should not be world-readable.
+    """
+    if PLATFORM == WINDOWS:
+        return
+    try:
+        os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    except OSError as e:
+        logging.warning(f"Could not restrict permissions on {path}: {e}")
 
 
 class Config:
@@ -73,6 +88,9 @@ class Config:
                 temporary_path = f.name
                 json.dump(temp, f, indent=4)
             os.replace(temporary_path, self.file_name)
+            # NamedTemporaryFile already creates the file as 0600, but be
+            # explicit so the guarantee does not depend on that detail.
+            restrict_file_permissions(self.file_name)
             self._saved_data = data.copy()
             return True
         except Exception as e:
@@ -91,6 +109,8 @@ class Config:
                 with open(self.file_name, "r") as f:
                     file_data = json.load(f)
                     self.data.update(file_data)
+                # Data files created by older versions can be world-readable.
+                restrict_file_permissions(self.file_name)
                 # Decode hashed_password if present
                 if self.data.get("hashed_password"):
                     self.data["hashed_password"] = base64.b64decode(

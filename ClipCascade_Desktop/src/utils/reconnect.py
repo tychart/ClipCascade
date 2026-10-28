@@ -59,6 +59,7 @@ class ReconnectMixin:
                     if self.disconnected or self.is_connected:
                         break
                     self._reconnect_attempts += 1
+                self._before_reconnect()
                 try:
                     self.connect()
                 except Exception:
@@ -70,6 +71,21 @@ class ReconnectMixin:
             # Cover a close arriving as the successful worker was exiting.
             if not self.disconnected and not self.is_connected:
                 self._start_reconnect()
+
+    def _before_reconnect(self):
+        """Hook run before every automatic reconnect attempt.
+
+        The application registers ``relogin_callback`` so a session the server
+        invalidated (proxy restart, expiry) is refreshed before retrying; the
+        probe is throttled and never raises, so it cannot stall the worker.
+        """
+        callback = getattr(self, "relogin_callback", None)
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            logging.exception("Re-authentication before reconnect failed")
 
     def _stop_reconnect(self):
         with self._retry_lock:

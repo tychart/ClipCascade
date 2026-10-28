@@ -10,6 +10,19 @@ class WSInterface(ABC):
     ############################
     is_auto_reconnecting: bool = False
 
+    # Optional callable set by the application; invoked before every automatic
+    # reconnect attempt so the session can be refreshed before retrying.
+    relogin_callback = None
+
+    def set_relogin_callback(self, callback):
+        """Register a callable invoked before every automatic reconnect attempt.
+
+        The application uses this to re-authenticate when the server has
+        invalidated the stored session (for example after a server or reverse
+        proxy restart), so the connection recovers without user interaction.
+        """
+        self.relogin_callback = callback
+
     @abstractmethod
     def __init__(self, config: Config, is_login_phase=True):
         """This method must be implemented in subclasses."""

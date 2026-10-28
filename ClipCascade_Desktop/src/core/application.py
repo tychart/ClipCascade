@@ -3,6 +3,7 @@ import errno
 import logging
 import signal
 import sys
+import time
 
 
 from core.constants import *
@@ -10,6 +11,7 @@ from core.constants import *
 from core.config import Config
 from utils.request_manager import RequestManager
 from utils.cipher_manager import CipherManager
+from utils.notification_manager import NotificationManager
 from utils.update_checker import UpdateChecker, parse_version
 from stomp_ws.stomp_manager import STOMPManager
 from p2p.p2p_manager import P2PManager
@@ -30,6 +32,18 @@ else:
     from gui.login import LoginForm
     from gui.info import CustomDialog
     from gui.tray import TaskbarPanel
+
+
+class _WebsocketClientNoiseFilter(logging.Filter):
+    """Drop websocket-client's "<error> - goodbye" line.
+
+    The library logs it at ERROR for every failed connection attempt while the
+    reconnect logic reports the same cause itself, so it would otherwise flood
+    the log (and hide real errors) during an outage.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "- goodbye" not in record.getMessage()
 
 
 class Application:
@@ -64,6 +78,11 @@ class Application:
             self.stomp_manager = STOMPManager(self.config)
             self.p2p_manager = P2PManager(self.config)
             self.cipher_manager = CipherManager(self.config)
+            self.notification_manager = NotificationManager(self.config)
+            # Timestamp of the last session validity probe (used to throttle it).
+            self._last_session_probe = 0.0
+            # Avoid repeating the "log in again" notification on every probe.
+            self._relogin_notified = False
         except Exception as e:
             CustomDialog(
                 f"An error occurred during application initialization: {e}",
@@ -78,6 +97,7 @@ class Application:
             filename=self.log_file_path,
             filemode="w",
         )
+        logging.getLogger("websocket").addFilter(_WebsocketClientNoiseFilter())
 
     def ensure_single_instance(self):
         if PLATFORM == WINDOWS:
@@ -163,95 +183,241 @@ class Application:
             pass
         self.lock_file = None
 
-    def authenticate_and_connect(self):
-        # Attempt to connect with existing cookie
-        if self.config.data.get("cookie"):
-            ws_conn_successful, msg = self._get_ws_manager().connect()
-            if ws_conn_successful:
-                self._get_ws_manager().is_login_phase = False
-                return
+    def _has_saved_credentials(self) -> bool:
+        """True when the client can log in again without asking the user.
 
-        # enable login form
-        used_saved_credentials = False
-        display_login_success_dialog = False
-        if PLATFORM.startswith(LINUX) and LINUX_USE_CLI_UI:
-            Echo("═" * 14 + "\n║ LOGIN FORM ║\n" + "═" * 14)
-        while True:
-            if (
-                self.config.data.get("cookie") is not None
-                and self.config.data["save_password"]
-                and self.config.data["cipher_enabled"] == False
-                and not used_saved_credentials
-            ):
-                # Attempt to connect with password when using saved credentials
-                used_saved_credentials = True
+        Matches the server-side/UX contract of the "Store Password Locally"
+        option: the hash the server expects is only kept on disk when
+        encryption is disabled, because it is password-equivalent.
+        """
+        return bool(
+            self.config.data.get("save_password")
+            and not self.config.data.get("cipher_enabled")
+            and self.config.data.get("username")
+            and self.config.data.get("password")
+        )
+
+    def _apply_login(self, raw_password: str = None) -> tuple[bool, str]:
+        """Log in with the current credentials and open the WebSocket.
+
+        Expects ``config.data["password"]`` to hold the SHA3-512 hash of the
+        password (the value the server compares against). ``raw_password`` is
+        only needed to derive the encryption key when encryption is enabled.
+        """
+        try:
+            login_successful, msg_login, cookie = self.request_manager.login()
+            if not login_successful:
+                return False, "Login Failed\n" + msg_login
+
+            self.config.data["cookie"] = cookie
+            self.config.data["csrf_token"] = self.request_manager.get_csrf_token()
+            self.config.data["server_mode"] = self.request_manager.get_server_mode()
+            if self.config.data["server_mode"] == "P2P":
+                self.config.data["stun_url"] = self.request_manager.get_stun_url()
+                self.config.data["maxsize"] = -1
+                self.config.data["websocket_url"] = Config.convert_to_websocket_url(
+                    self.config.data["server_url"], WEBSOCKET_ENDPOINT_P2P
+                )
             else:
-                display_login_success_dialog = True
-                self.config.data["password"] = ""  # Clear the password
-                login_form = LoginForm(
-                    self.config,
-                    on_quit_callback=(
-                        None
-                        if (PLATFORM.startswith(LINUX) and LINUX_USE_CLI_UI)
-                        else lambda: sys.exit(0)
+                self.config.data["stun_url"] = ""
+                self.config.data["maxsize"] = self.request_manager.maxsize()
+                self.config.data["websocket_url"] = Config.convert_to_websocket_url(
+                    self.config.data["server_url"], WEBSOCKET_ENDPOINT
+                )
+
+            ws_conn_successful, msg = self._get_ws_manager().connect()
+            if not ws_conn_successful:
+                return False, (
+                    "Login successful but websocket connection failed. \n"
+                    "Please check websocket-url\n" + msg
+                )
+
+            self._get_ws_manager().is_login_phase = False
+            if self.config.data["cipher_enabled"] and raw_password is not None:
+                self.config.data["hashed_password"] = self.cipher_manager.hash_password(
+                    raw_password
+                )
+            # Same rule as the 3.3.x login flow: the password hash is
+            # password-equivalent, so it is never persisted when encryption is
+            # enabled (the key is stored separately instead).
+            if self.config.data["cipher_enabled"] or not self.config.data["save_password"]:
+                self.config.data["password"] = ""
+            # Persist the fresh cookie so the next start can connect directly.
+            self.config.save()
+            return True, ""
+        except Exception as e:
+            msg = f"Error during login: {e}"
+            logging.error(msg)
+            return False, msg
+
+    def _connect_with_stored_session(self) -> bool:
+        """Connect using the stored session cookie.
+
+        A transient failure here (no DNS yet, Wi-Fi still associating, server
+        briefly down) must not send the user back to the login form, so keep
+        retrying while the server is merely unreachable. Only give up when the
+        server itself rejects the session.
+        """
+        ws_manager = self._get_ws_manager()
+        delay = STARTUP_RECONNECT_INITIAL_DELAY
+        attempt = 0
+        started_at = time.monotonic()
+        notified = False
+
+        while True:
+            attempt += 1
+            connected, msg = ws_manager.connect()
+            if connected:
+                ws_manager.is_login_phase = False
+                if attempt > 1:
+                    logging.info(
+                        f"WebSocket connected after {attempt} attempt(s) "
+                        f"({time.monotonic() - started_at:.1f}s)"
+                    )
+                return True
+
+            # Use the short probe timeout: a server that drops the packet must
+            # not turn each retry into a 15s wait.
+            if (
+                self.request_manager.session_is_valid(timeout=SESSION_PROBE_TIMEOUT)
+                is False
+            ):
+                logging.warning(
+                    "The server rejected the stored session; a new login is required"
+                )
+                return False
+
+            if not notified and (
+                time.monotonic() - started_at >= STARTUP_RECONNECT_NOTIFY_AFTER
+            ):
+                self.notification_manager.notify(
+                    title=f"{APP_NAME}: Waiting for server…",
+                    message=(
+                        "The server is not reachable yet. ClipCascade will connect "
+                        "automatically once it is."
                     ),
                 )
-                if not (PLATFORM.startswith(LINUX) and LINUX_USE_CLI_UI):
-                    login_form.watch_updates(self.update_checker)
-                login_form.mainloop()  # wait until login form is closed
-                raw_password = self.config.data[
-                    "password"
-                ]  # Store the raw password temporarily for hashing
-                self.config.data["password"] = (
-                    CipherManager.string_to_sha3_512_lowercase_hex(raw_password)
-                )  # Hash the password
+                notified = True
 
-            login_successful, msg_login, self.config.data["cookie"] = (
-                self.request_manager.login()
+            logging.warning(f"{msg} - retrying in {delay}s")
+            time.sleep(delay)
+            delay = min(
+                delay * STARTUP_RECONNECT_BACKOFF_FACTOR, STARTUP_RECONNECT_MAX_DELAY
             )
+
+    def _login_interactively(self):
+        """Ask the user for credentials until the login succeeds."""
+        if PLATFORM.startswith(LINUX) and LINUX_USE_CLI_UI:
+            Echo("═" * 14 + "\n║ LOGIN FORM ║\n" + "═" * 14)
+
+        while True:
+            self.config.data["password"] = ""  # Clear the password
+            login_form = LoginForm(
+                self.config,
+                on_quit_callback=(
+                    None
+                    if (PLATFORM.startswith(LINUX) and LINUX_USE_CLI_UI)
+                    else lambda: sys.exit(0)
+                ),
+            )
+            if not (PLATFORM.startswith(LINUX) and LINUX_USE_CLI_UI):
+                login_form.watch_updates(self.update_checker)
+            login_form.mainloop()  # wait until login form is closed
+            # Keep the raw password around: it is needed to derive the
+            # encryption key, which cannot be derived from the password hash.
+            raw_password = self.config.data["password"]
+            self.config.data["password"] = (
+                CipherManager.string_to_sha3_512_lowercase_hex(raw_password)
+            )
+
+            login_successful, msg = self._apply_login(raw_password)
             if login_successful:
-                self.config.data["csrf_token"] = self.request_manager.get_csrf_token()
-                self.config.data["server_mode"] = self.request_manager.get_server_mode()
-                if self.config.data["server_mode"] == "P2P":
-                    self.config.data["stun_url"] = self.request_manager.get_stun_url()
-                    self.config.data["maxsize"] = -1
-                    self.config.data["websocket_url"] = Config.convert_to_websocket_url(
-                        self.config.data["server_url"], WEBSOCKET_ENDPOINT_P2P
-                    )
-                else:
-                    self.config.data["stun_url"] = ""
-                    self.config.data["maxsize"] = self.request_manager.maxsize()
-                    self.config.data["websocket_url"] = Config.convert_to_websocket_url(
-                        self.config.data["server_url"], WEBSOCKET_ENDPOINT
-                    )
-                ws_conn_successful, msg = self._get_ws_manager().connect()
-                if ws_conn_successful:
-                    self._get_ws_manager().is_login_phase = False
-                    if self.config.data["cipher_enabled"]:
-                        self.config.data["hashed_password"] = (
-                            self.cipher_manager.hash_password(raw_password)
-                        )
-                    if self.config.data["cipher_enabled"] or not self.config.data["save_password"]:
-                        self.config.data["password"] = ""
-                    if display_login_success_dialog:
-                        CustomDialog(
-                            "Success! ClipCascade will now run in the task bar/menu bar.",
-                            msg_type="success",
-                            timeout=5000,
-                        ).mainloop()
-                    break
-                else:
-                    CustomDialog(
-                        "Login successful but websocket connection failed. \nPlease check websocket-url\n"
-                        + msg,
-                        msg_type="error",
-                    ).mainloop()
-            else:
-                CustomDialog("Login Failed\n" + msg_login, msg_type="error").mainloop()
+                CustomDialog(
+                    "Success! ClipCascade will now run in the task bar/menu bar.",
+                    msg_type="success",
+                    timeout=5000,
+                ).mainloop()
+                return
 
             raw_password = None  # Clear the raw password
+            CustomDialog(msg, msg_type="error").mainloop()
             if PLATFORM.startswith(LINUX) and LINUX_USE_CLI_UI:
                 Echo("-" * 53)
+
+    def _refresh_session(self) -> bool:
+        """Re-authenticate when the server invalidated the stored session.
+
+        Called before every automatic reconnect attempt, so it may run on the
+        WebSocket thread: it never opens a UI. Returns True when the session is
+        (or may still be) valid.
+        """
+        try:
+            if not self.config.data.get("cookie"):
+                return False
+
+            now = time.monotonic()
+            if now - self._last_session_probe < SESSION_PROBE_MIN_INTERVAL:
+                return True
+            self._last_session_probe = now
+
+            if (
+                self.request_manager.session_is_valid(timeout=SESSION_PROBE_TIMEOUT)
+                is not False
+            ):
+                # Valid, or the server is unreachable: let the normal reconnect
+                # loop keep trying.
+                self._relogin_notified = False
+                return True
+
+            if not self._has_saved_credentials():
+                if not self._relogin_notified:
+                    logging.warning(
+                        "The server rejected the stored session and no credentials "
+                        "are saved. Log in again from the ClipCascade tray menu "
+                        "(Logoff and Quit, then start ClipCascade)."
+                    )
+                    self.notification_manager.notify(
+                        title=f"{APP_NAME}: Log in again",
+                        message=(
+                            "The server session expired. Use 'Logoff and Quit' in the "
+                            "tray menu, then start ClipCascade to log in again."
+                        ),
+                    )
+                    # Do not repeat this on every reconnect attempt.
+                    self._relogin_notified = True
+                return False
+
+            logging.info(
+                "The server rejected the stored session; re-authenticating with the "
+                "saved credentials"
+            )
+            login_successful, msg = self._apply_login()
+            if login_successful:
+                return True
+            logging.error(f"Automatic re-authentication failed: {msg}")
+            return False
+        except Exception as e:
+            logging.error(f"Error while refreshing the session: {e}")
+            return False
+
+    def authenticate_and_connect(self):
+        # 1. Try the stored session cookie. Transient failures are retried, so a
+        #    slow network at startup does not force the user to log in again.
+        if self.config.data.get("cookie"):
+            if self._connect_with_stored_session():
+                return
+
+        # 2. The cookie is missing, or the server rejected it. Log in again
+        #    without bothering the user when credentials were saved.
+        if self._has_saved_credentials():
+            logging.info("Logging in with the saved credentials")
+            login_successful, msg = self._apply_login()
+            if login_successful:
+                return
+            logging.warning(f"Saved credentials were rejected: {msg}")
+
+        # 3. Fall back to asking the user.
+        self._login_interactively()
 
     def _get_ws_manager(self):
         if self.config.data["server_mode"] == "P2P":
@@ -341,6 +507,9 @@ class Application:
             self.ensure_single_instance()
             self.config.load()
             self.update_checker.start()
+            # Let the transport re-authenticate itself when the server
+            # invalidates our session (e.g. after a proxy restart or expiry).
+            self._get_ws_manager().set_relogin_callback(self._refresh_session)
             self.authenticate_and_connect()
             self.config.save()
             donation_url = self.get_donation_url()
