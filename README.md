@@ -610,6 +610,18 @@ sudo nohup python3 main.py &> /dev/null &
 
 To ensure ClipCascade starts automatically when your system boots, modify the file paths as necessary and add the appropriate command to your startup script.
 
+##### systemd (recommended on most distributions)
+
+A ready-to-edit user unit is provided in [`ClipCascade_Desktop/contrib/systemd/clipcascade.service`](ClipCascade_Desktop/contrib/systemd/clipcascade.service). Adjust the two paths in `ExecStart` to point at your `python` and `main.py`, then:
+
+```
+cp ClipCascade_Desktop/contrib/systemd/clipcascade.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now clipcascade.service
+```
+
+The unit is bound to `graphical-session.target` (the tray needs the graphical session) and is stopped together with it on logout/shutdown. It restarts the client if it crashes, but not after a deliberate *Quit* / *Logoff and Quit* from the tray menu; use `systemctl --user stop clipcascade` to stop it for good.
+
 ##### Example:
 ##### GUI
 ```
