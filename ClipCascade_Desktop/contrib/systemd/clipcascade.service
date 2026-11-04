@@ -8,9 +8,11 @@
 #
 # Notes:
 #   * Drop --gui true (or set it to false) to use the terminal based client.
-#   * --xmode true forces the X11/XWayland clipboard path (xclip), which is
-#     useful on Wayland desktops where the Wayland clipboard implementation is
-#     not wanted.
+#   * --xmode true forces the X11/XWayland clipboard path (xclip). Use it on
+#     GNOME/Wayland: Mutter does not implement wlr-data-control, so wl-paste
+#     can only read the clipboard from the focused client and its polling
+#     steals focus from the active window. xclip goes through Mutter's X11
+#     bridge and is unobtrusive.
 #   * graphical-session.target is reached before the network is fully
 #     configured. The client retries the stored session instead of falling back
 #     to the login form, so no network ordering is required here.

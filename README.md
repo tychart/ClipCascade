@@ -696,6 +696,8 @@ To check an environment afterwards, the interpreter that runs the client should 
 # <class 'pystray._appindicator.Icon'>
 ```
 
+On **GNOME/Wayland**, add `--xmode true` to `ExecStart`. GNOME's Mutter does not implement the `wlr-data-control` protocol, so the Wayland clipboard can only be read by the *focused* client; the `wl-paste` polling fallback therefore pulls keyboard focus every few seconds and closes menus, extension popups and similar UI. `xclip` reads and writes the same clipboard through Mutter's X11 bridge without taking focus. The client logs `Clipboard backend: xclip` at startup when it uses that path.
+
 ##### Example:
 ##### GUI
 ```
@@ -1299,7 +1301,7 @@ You can adjust these settings in the **advanced settings** section on the login 
    | **Linux (X11)**           | Integrates `Gtk.Clipboard` to capture clipboard changes in an event-driven manner. **Default UI:** GUI (tray).                                                         |
    | **Linux (XWayland)**      | Same X11-style stack as above: `Gtk.Clipboard` when possible, otherwise `xclip` polling (~0.3s). **Default UI:** GUI—not CLI. Detection treats XWayland as a Wayland session that also has `DISPLAY` and `WAYLAND_DISPLAY` set. |
    | **Linux (Unknown)**     | Treated like the X11-style path for defaults (GTK / `xclip` as above). **Default UI:** GUI. |
-   | **Linux (native Wayland, Hyprland)** | Tries **`wl-paste --watch` first** (**event-driven** where the compositor supports it: clipboard changes wake the watcher instead of a fixed timer). If `--watch` is not supported or exits immediately, falls back to **polling** `wl-paste -l` (default every 3 seconds; `--polling`). **Default UI:** CLI (terminal). Override with `--gui` / `--xmode`. |
+   | **Linux (native Wayland, Hyprland)** | Tries **`wl-paste --watch` first** (**event-driven** where the compositor supports it: clipboard changes wake the watcher instead of a fixed timer). If `--watch` is not supported or exits immediately, falls back to **polling** `wl-paste -l` (default every 3 seconds; `--polling`). **Default UI:** CLI (terminal). Override with `--gui` / `--xmode`. **GNOME/Mutter does not implement `wlr-data-control`**, so watch mode always exits there and the polling fallback takes over; Mutter only serves Wayland clipboard reads to the focused client, so that polling can steal focus from the active window (closing bookmark menus, extension popups, and interrupting typing). On GNOME, use `--xmode true` to keep the `xclip` backend through Mutter's X11 bridge instead. |
    | **Android**               | Uses `ClipboardManager` to capture clipboard changes in an event-driven manner.                                                                         |
 
 
