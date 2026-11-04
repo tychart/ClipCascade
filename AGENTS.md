@@ -97,6 +97,7 @@ Everything below was re-applied by hand onto the rewritten files, not by automat
 | `README.md` | uv install, systemd, tray/PyGObject, log rotation | **Kept**, re-anchored to upstream's rewritten README (Steps 4.3, startup script section, logs bullet, advanced settings). |
 | `contrib/systemd/clipcascade.service` | new file | **Kept** (upstream has none). |
 | `utils/fonts.py` | new file | **Kept** (upstream has none). |
+| `clipboard/clipboard_monitor_linux.py`, `clipboard/clipboard_manager.py` (backend choice) | `is_x_clipboard_owner()` used as a one-shot "is xclip usable?" probe at startup | **Fixed.** xclip answers "no owner for the CLIPBOARD selection" when the clipboard is empty, which is the normal state right after login, and that used to switch the client to `wl-paste` for the rest of the session. On GNOME/Mutter (no `wlr-data-control`) `wl-paste` reads need keyboard focus, so every poll stole focus from the active window (closed bookmark menus / extension popups, interrupted typing). Now "no owner" counts as usable, `--xmode` is recorded (`LINUX_XMODE_REQUESTED`) and never overridden, the auto-detected path retries the probe (`_XCLIP_PROBE_ATTEMPTS` × 1 s) because XWayland may still be starting, and `clipboard_manager` writes with xclip when `--xmode` was explicit. |
 
 ### Upstream changes that matter for this work (3.3.1 → 3.4.1)
 
@@ -239,6 +240,13 @@ the manager is connected.
   `pystray._appindicator.Icon`.
 - **Wayland clipboard**: the Wayland monitor also imports `gi`; without it the client logs
   `Failed to start clipboard monitor` and polls XWayland (`--xmode true`).
+- **Clipboard backend**: an XWayland session gets xclip, which reads and writes the Wayland
+  clipboard through Mutter's X11 bridge (verified: `xclip -o` returns a clipboard owned by
+  `wl-copy`). Native Wayland gets `wl-paste --watch` when the compositor implements
+  `wlr-data-control` (wlroots, KDE), otherwise wl-paste polling — and on GNOME/Mutter that
+  polling needs keyboard focus, so it steals focus from the active window every poll. Never
+  treat an empty clipboard as "xclip is broken"; `--xmode true` forces xclip and is what a
+  GNOME/Wayland systemd unit should pass (the log then says `Clipboard backend: xclip`).
 - **Fonts**: Tk silently falls back to the bitmap `fixed` font for unknown families. Always use
   `utils/fonts.ui_font(size, [weight=], [underline=], master=<widget or root>)` for new Tk UI
   text — never `("Helvetica", n)` / `("Arial", n)`. Pixel sizes (negative) cannot be validated
