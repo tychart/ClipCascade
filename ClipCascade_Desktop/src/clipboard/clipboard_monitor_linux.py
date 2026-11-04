@@ -63,6 +63,9 @@ def _monitor_x_wl_clipboard(
     ignore_patterns = [
         r"target .+ not available",  # xclip pattern
         r"no suitable type of content copied",  # wl-clipboard pattern
+        r"no owner for the .*selection",  # xclip: clipboard is empty
+        r"cannot convert .* selection to target",  # xclip: owner went away
+        r"nothing is copied",  # wl-paste: clipboard is empty
     ]
 
     if LINUX_CLIPBOARD_POLL_INTERVAL_SEC is not None:
@@ -187,9 +190,12 @@ def _monitor_x_wl_clipboard(
 
 def _monitor_wl_watch(enable_image_monitoring=False, enable_file_monitoring=False):
     """Event-driven Wayland clipboard monitoring using wl-paste --watch.
-    Uses the wlr-data-control-v1 protocol which does not create visible
+    Uses the wlr-data-control-v1 protocol, which does not create visible
     surfaces or steal focus. Supported by wlroots-based compositors
-    (Sway, Hyprland, etc.) and KDE Plasma on Wayland.
+    (Sway, Hyprland, etc.) and KDE Plasma on Wayland; GNOME/Mutter does not
+    implement the protocol, so there this exits immediately and the caller
+    falls back to polling (which does need focus). Use the xclip backend
+    (--xmode true) on GNOME to avoid that.
     Returns True if watch mode ran successfully, False to fall back to polling."""
     global _block_image_once, _wl_watch_proc
 
@@ -198,6 +204,9 @@ def _monitor_wl_watch(enable_image_monitoring=False, enable_file_monitoring=Fals
     ignore_patterns = [
         r"target .+ not available",
         r"no suitable type of content copied",
+        r"no owner for the .*selection",
+        r"cannot convert .* selection to target",
+        r"nothing is copied",
     ]
 
     try:
@@ -382,20 +391,83 @@ def execute_command(*args) -> tuple:
         return (False, error.decode())
 
 
+# xclip reports this when nothing owns the CLIPBOARD selection. That is the
+# normal state right after login, not a broken X connection.
+_NO_CLIPBOARD_OWNER = re.compile(r"no owner for the .*selection", re.IGNORECASE)
+
+# XWayland / XAUTHORITY may not be ready yet when the client is started from
+# graphical-session.target, so give xclip a few chances before giving up.
+_XCLIP_PROBE_ATTEMPTS = 5
+_XCLIP_PROBE_RETRY_SEC = 1
+
+
 def is_x_clipboard_owner():
-    # Check if the X clipboard is owned by the current user
-    return execute_command("xclip", "-selection", "clipboard", "-t", "TARGETS", "-o")[0]
+    """True when xclip can reach the X (or XWayland) clipboard.
+
+    The name is historical; what callers need to know is whether the xclip
+    backend is usable here, which is what the write paths in
+    ``clipboard_manager`` use it for as well.
+
+    An *empty* clipboard is not a reason to give up on xclip: right after login
+    the CLIPBOARD selection has no owner at all, and on Mutter/GNOME the X11
+    selection is bridged to the Wayland one, so xclip can read and write the
+    clipboard that Wayland applications use. Treating "no owner" as failure
+    used to switch the client to wl-paste for the rest of the session, and
+    Mutter only serves Wayland clipboard reads to the *focused* client, so
+    every poll stole focus from the active window.
+    """
+    try:
+        success, output = execute_command(
+            "xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"
+        )
+    except OSError as e:
+        # xclip is not installed. Never kill the monitor thread over it.
+        logging.warning(f"xclip is not available: {e}")
+        return False
+    if success:
+        return True
+    text = output if isinstance(output, str) else output.decode("utf-8", "replace")
+    return bool(_NO_CLIPBOARD_OWNER.search(text))
+
+
+def _xclip_is_available():
+    """Probe xclip, retrying briefly while the X server is still starting."""
+    for attempt in range(1, _XCLIP_PROBE_ATTEMPTS + 1):
+        if is_x_clipboard_owner():
+            return True
+        if attempt < _XCLIP_PROBE_ATTEMPTS:
+            logging.info(
+                "Waiting for the X clipboard to become available (%d/%d)",
+                attempt,
+                _XCLIP_PROBE_ATTEMPTS,
+            )
+            time.sleep(_XCLIP_PROBE_RETRY_SEC)
+    return False
 
 
 def _start_clipboard_polling(enable_image_monitoring, enable_file_monitoring):
     if XMODE:
-        x_clipboard_owner = is_x_clipboard_owner()
-        if not x_clipboard_owner:
+        if not LINUX_XMODE_REQUESTED and not _xclip_is_available():
+            # Only reachable when xclip cannot talk to the X server at all
+            # (no XWayland / no XAUTHORITY), not when the clipboard is empty.
             logging.warning(
-                "x-clip is not owned by the current user. Switching to wl-clipboard."
+                "xclip cannot access the X clipboard here. Switching to "
+                "wl-clipboard, whose polling needs keyboard focus and can "
+                "interrupt the active window; pass --xmode true to keep xclip."
             )
+            x_mode = False
+        else:
+            logging.info(
+                "Clipboard backend: xclip"
+                + (
+                    " (--xmode was requested explicitly)"
+                    if LINUX_XMODE_REQUESTED
+                    else ""
+                )
+            )
+            x_mode = True
         _monitor_x_wl_clipboard(
-            x_mode=x_clipboard_owner,
+            x_mode=x_mode,
             enable_image_monitoring=enable_image_monitoring,
             enable_file_monitoring=enable_file_monitoring,
         )
@@ -404,8 +476,12 @@ def _start_clipboard_polling(enable_image_monitoring, enable_file_monitoring):
             enable_image_monitoring=enable_image_monitoring,
             enable_file_monitoring=enable_file_monitoring,
         ):
-            logging.info(
-                "Falling back to wl-paste polling mode for clipboard monitoring"
+            logging.warning(
+                "Falling back to wl-paste polling mode for clipboard monitoring. "
+                "Compositors without wlr-data-control (GNOME/Mutter) only serve "
+                "Wayland clipboard reads to the focused client, so polling can "
+                "steal focus from the active window; use --xmode true where "
+                "XWayland is available."
             )
             _monitor_x_wl_clipboard(
                 x_mode=False,
@@ -416,7 +492,10 @@ def _start_clipboard_polling(enable_image_monitoring, enable_file_monitoring):
 
 def _runner(enable_image_monitoring=False, enable_file_monitoring=False):
     global _is_gdk_running, _run_poll
-    logging.info(f"XMODE: {XMODE}")
+    logging.info(
+        f"XMODE: {XMODE}"
+        + (" (requested with --xmode)" if LINUX_XMODE_REQUESTED else "")
+    )
     try:
         _run_poll.set()
         import gi

@@ -49,7 +49,12 @@ class ClipboardManager:
         self._attachment_loading = None
 
         if PLATFORM.startswith(LINUX) and XMODE:
-            self.is_x_clipboard_owner = clipboard_monitor.is_x_clipboard_owner()
+            # Decides whether pasted content is written with xclip or wl-copy.
+            # Keep the clipboard in the backend the user asked for, and let the
+            # probe only answer for the auto-detected case.
+            self.is_x_clipboard_owner = (
+                LINUX_XMODE_REQUESTED or clipboard_monitor.is_x_clipboard_owner()
+            )
 
     def set_tray_ref(self, sys_tray: TaskbarPanel):
         """
