@@ -23,9 +23,13 @@ reliability, tray, fonts, packaging docs). See "Upstream PR plan" below before p
 The Linux desktop client lost a valid session whenever the first WebSocket connect at
 startup failed. The client is normally started from `graphical-session.target`, which is
 reached *before* networking (DNS/Wi-Fi), so every boot ended on the login form even though
-the server still accepted the stored cookie. The branch also makes the tray icon and Tk UI
-fonts work out of the box on Linux, and documents a `uv`-based install plus a systemd user
-unit.
+the server still accepted the stored cookie. The branch also (a) keeps the xclip clipboard
+backend instead of falling back to focus-stealing `wl-paste` polling, (b) makes the tray icon
+and Tk UI fonts work out of the box on Linux, and (c) documents a `uv`-based install plus a
+systemd user unit.
+
+**These are separate concerns and are meant to be opened as separate upstream PRs** — see
+"Upstream PR plan" in §6 for the commit → PR mapping.
 
 Commit list on top of `fd13b2b` (all rebased, retitled to upstream's PR-title rules):
 
@@ -40,6 +44,9 @@ Commit list on top of `fd13b2b` (all rebased, retitled to upstream's PR-title ru
 | `chore: ignore local lock files created in the source tree` | ignore `clipcascade.lock` |
 | `fix(linux-gui): honour pixel-sized UI fonts` | size check only for positive (point) sizes |
 | `docs: record the fork's divergence from upstream in AGENTS.md` | this file (fork-only) |
+| `fix(linux-gui): keep the xclip backend when the clipboard is empty` | no wl-paste focus stealing on GNOME, `--xmode` is honoured, empty clipboard is not "xclip is broken" |
+| `docs: document the GNOME Wayland clipboard fallback` | README clipboard table + systemd section, contrib unit notes |
+| `docs: update the fork notes after the clipboard backend fix` | this file (fork-only) |
 
 ---
 
@@ -53,7 +60,7 @@ Commit list on top of `fd13b2b` (all rebased, retitled to upstream's PR-title ru
 2. **Never re-add per-manager reconnect code.** Everything reconnect-related goes through
    `utils/reconnect.py` (`ReconnectMixin`). The only local addition there is the
    `_before_reconnect()` hook.
-3. **`AGENTS.md` and its commit stay out of upstream PRs.** Everything else on the branch is
+3. **`AGENTS.md` and its commits stay out of upstream PRs.** Everything else on the branch is
    intended to be PR-able.
 4. **Don't "fix" the `save_password` security stance.** Upstream deliberately drops the stored
    password hash when encryption is enabled. This branch used to allow it; that feature was
@@ -61,6 +68,10 @@ Commit list on top of `fd13b2b` (all rebased, retitled to upstream's PR-title ru
    password-equivalent.
 5. Run the checks in §7 before claiming the branch works. There is no upstream test suite for
    the desktop client.
+6. **Keep the fixes separable.** They are reviewed and merged as *separate* upstream PRs (§6),
+   so do not fold one concern into another, do not squash the set, and keep each commit atomic
+   and buildable on its own. A new fix gets its own commit (and its own PR entry in §6), not a
+   ride-along on an existing one.
 
 ---
 
@@ -289,29 +300,47 @@ the manager is connected.
 
 ### Upstream PR plan
 
-- Include: the eight upstream-facing commits (everything except this file).
-- Suggested PR title (release-relevant, `linux-gui` only):
-  `fix(linux-gui): keep the session across restarts and fix the tray/font setup`
-- The PR **Description** must be user-facing release notes, for example:
-  - ClipCascade no longer shows the login form when the network is not up yet at login; it
-    retries and connects on its own.
-  - An expired or invalidated server session is refreshed automatically when the password is
-    stored locally, instead of leaving a silently broken tray icon.
-  - The tray icon now reports when PyGObject is missing (the icon had no menu at all in that
-    case), and the Linux docs/systemd unit explain how to install it.
-  - UI text no longer shrinks to an unreadable bitmap font on Tk builds without Xft.
-  - Logs are kept across restarts (rotated, 5 MiB × 2) instead of being truncated.
-  - A `uv` install path and a systemd user unit are documented.
-  - The stored session is only re-used when its encryption key is still present, and startup
-    does not open the login form while the network is still coming up.
-- The branch is currently rebased on v3.4.1. Since 3.4.0 put `TransportManager` between the app
-  and the STOMP/P2P managers, the re-auth hook lives on `ReconnectMixin` (`utils/reconnect.py`)
-  rather than on `interfaces/ws_interface.py` — mention that in the PR body so reviewers do not
-  look for the old interface addition.
-- Checklist before opening: `fix(linux-gui)` scope only, description filled in, tested locally
-  on Linux (GUI **and** CLI), no `AGENTS.md`, no `DATA`/logs/locks, no secrets.
-- Decide explicitly whether `requires-python >=3.9` and the `tray` extra belong in the PR;
-  they are packaging fixes needed for the documented `uv` flow, but they touch shared metadata.
+The local commits are **five independent fixes** plus two fork-only doc commits. Do not open one giant PR: each item below is
+a self-contained change that upstream can review and release on its own (the user explicitly
+wants separate PRs). Two commits are fork-only (`AGENTS.md`) and must never be included.
+
+| # | PR title (= commit subject, PR-title grammar) | Commits to cherry-pick | Notes |
+|---|---|---|---|
+| 1 | `fix(linux-gui): keep the session across restarts and slow networks` | `keep the session across restarts…` | Release-relevant. Touches `core/application.py`, `core/config.py`, `core/constants.py`, `utils/reconnect.py`, `utils/request_manager.py`. Explain in the body that 3.4.0's `TransportManager` owns the retry worker, so the re-auth hook lives on `ReconnectMixin` (`_before_reconnect`), **not** on `interfaces/ws_interface.py` — reviewers will look for the old interface addition otherwise. |
+| 2 | `fix(linux-gui): keep the xclip backend when the clipboard is empty` | `keep the xclip backend when the clipboard is empty` + `docs: document the GNOME Wayland clipboard fallback` | Independent of everything else. Touches `clipboard/clipboard_monitor_linux.py`, `clipboard/clipboard_manager.py`, `core/constants.py` (`LINUX_XMODE_REQUESTED`), README + contrib unit. Body: an empty clipboard at login is normal and used to look like "xclip is broken"; the wl-paste fallback needs keyboard focus on Mutter and closed bookmark menus / extension popups. |
+| 3 | `fix(linux-gui): resolve UI fonts at runtime and report a tray without a menu` | `resolve UI fonts at runtime…`, `honour pixel-sized UI fonts`, `warn when the tray falls back to the X11 backend` | Can be split again into "fonts" and "tray warning" if upstream prefers; both are tiny. Touches `utils/fonts.py` (new), `gui/login.py`, `gui/info.py`, `gui/tray.py`. |
+| 4 | `fix(linux-gui): keep log history instead of truncating it on every start` | `keep log history…` | Smallest fix; `RotatingFileHandler` 5 MiB × 2, `LOG_FILE_*` constants. |
+| 5 | `docs: document a uv install and a systemd user unit for the Linux client` | `docs: add a systemd user unit…`, `docs: document a uv-native install…`, `chore: ignore local lock files…` | Non-releasing (`docs:`/`chore:` **must not** have a scope), so it will not trigger a release. Carries the shared-metadata edits (`requires-python >=3.9`, `tray` extra, `PyGObject` line) — decide explicitly whether those belong in this PR or in their own `build:`/`chore:` one. |
+| — | *(never)* | `docs: record the fork's divergence…`, `docs: update the fork notes…` | Fork-only; `AGENTS.md` must stay out of every PR. |
+
+Mechanics:
+
+```bash
+git fetch upstream
+git switch -c fix/xclip-backend upstream/main
+git cherry-pick <sha> <sha>            # use the subjects above; SHAs change on every rebase
+git push origin fix/xclip-backend
+```
+
+- Open PRs against `upstream/main` one at a time. PRs 1, 2 and 3 all touch
+  `core/constants.py` and PRs 1/5 both touch `README.md`, so whichever merges first makes the
+  others need a rebase — that is expected, rebase locally and force-push the PR branch.
+- Each PR **Description** becomes the GitHub release notes: user-facing bullets, no
+  implementation detail, and the scopes must list every changed platform. Per-PR bullets:
+  - **PR 1:** no login form while the network is still coming up; sessions are refreshed
+    automatically when a password is stored; the stored session is only re-used while its
+    encryption key is present; REST calls and the stored `DATA` file are safer (timeouts,
+    `0600`).
+  - **PR 2:** the tray no longer loses keyboard focus every few seconds on GNOME/Wayland
+    (clipboard polling no longer pulls focus); an explicit `--xmode` is always respected.
+  - **PR 3:** the tray icon reports when PyGObject is missing (it had no menu at all in that
+    case); UI text no longer shrinks to an unreadable bitmap font on Tk builds without Xft.
+  - **PR 4:** logs are kept across restarts (rotated, 5 MiB × 2) instead of being truncated.
+  - **PR 5:** a `uv` install path and a systemd user unit are documented.
+- Checklist per PR: correct title grammar/scope, description filled in, tested locally on
+  Linux (GUI **and** CLI), no `AGENTS.md`, no `DATA`/logs/locks/`uv.lock`, no secrets.
+- Decide explicitly whether `requires-python >=3.9` and the `tray` extra belong in PR 5; they
+  are packaging fixes needed for the documented `uv` flow, but they touch shared metadata.
   Note that upstream's own code uses `list | None` annotations, which need Python 3.10 at
   runtime even though the metadata still says `>=3.8` — don't try to "fix" that here.
 
@@ -324,7 +353,11 @@ Environment used for the 2026-11-03 migration: `ClipCascade_Desktop/src/.venv`
 (`uv sync --extra tray` pulled `prompt-toolkit`, `pyfiglet`, Pillow 12, PyGObject 3.58.1…).
 `python3` on the host is 3.14 and has none of the deps. `gi`/PyGObject and
 `pystray._appindicator.Icon` are present, and a display is available (`DISPLAY=:0`;
-`xrandr` is missing, which only produces a harmless monitor-size warning).
+`xrandr` is missing, which only produces a harmless monitor-size warning). The desktop is
+**GNOME 51 on Wayland/Mutter** (`XDG_SESSION_TYPE=wayland`, `DISPLAY=:0`, so
+`detect_linux_display_server()` says `XWayland` and `XMODE` defaults to `True`), with the
+`clipboard-indicator` and `appindicatorsupport` extensions enabled — that is the exact setup
+the xclip backend exists for.
 
 Static:
 
@@ -373,6 +406,21 @@ committed):
   i.e. none fall back to the bitmap `fixed` font.
 - Tray warning: a stub icon with `HAS_MENU = False` (module `pystray._xorg`) logs the error
   naming `_xorg`; an icon with `HAS_MENU = True` logs nothing.
+- Clipboard backend selection (stub `execute_command`/`_xclip_is_available`, no display
+  needed): `TARGETS` readable → `True`; `"no owner for the CLIPBOARD selection"` → still
+  `True` (empty clipboard is not a broken X connection); `"Can't open display"` → `False`;
+  missing `xclip` (`FileNotFoundError`) → `False` without raising. Backend matrix:
+  auto-XWayland + empty clipboard → xclip; auto-XWayland + broken xclip → wl-paste (after the
+  `_XCLIP_PROBE_ATTEMPTS` × 1 s retries); `--xmode true` + broken xclip → still xclip;
+  `XMODE` off → `wl-paste --watch`, then polling when watch exits.
+- `--xmode` parsing (`python -c "import core.constants as c; …" --xmode …`): bare `--xmode`
+  exits 2 with `--xmode requires true or false`; `--xmode true` sets `XMODE=True` and
+  `LINUX_XMODE_REQUESTED=True`; `--xmode true --gui true` keeps `LINUX_USE_CLI_UI=False`.
+- Live on the GNOME/Mutter session (real clipboard): `wl-copy --clear`, start
+  `_start_clipboard_polling()` with `XMODE=True`, then `wl-copy` text → the monitor reports it
+  and no `wl-paste` process exists; `ClipboardManager.paste("…", "text")` writes through xclip
+  and `wl-paste -n` reads it back (Mutter's X11↔Wayland bridge in both directions). The
+  service must log `Clipboard backend: xclip` and never `Switching to wl-clipboard`.
 - End-to-end with a copied source tree and a `DATA` cookie pointing at a dead port: log shows
   `retrying in 2s` → `4s` → `8s`, no login form, no crash — in GUI *and* CLI mode. Every retry
   now starts with `server_discovery`, so a refused `/server-mode` is the first log line of each
