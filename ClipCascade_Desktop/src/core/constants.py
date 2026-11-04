@@ -130,6 +130,10 @@ PLATFORM = get_os_and_display_server()
 
 # Linux: CLI UI vs GTK tray — False on other platforms (unused except behind LINUX checks).
 LINUX_USE_CLI_UI = False
+# Linux: True when --xmode was given on the command line. The clipboard backend
+# then keeps xclip even when it cannot probe the X clipboard yet, instead of
+# second-guessing the user (False on other platforms).
+LINUX_XMODE_REQUESTED = False
 # Linux: optional override for xclip/wl-paste polling sleep (seconds); None = use built-ins (0.3 / 3).
 LINUX_CLIPBOARD_POLL_INTERVAL_SEC = None
 
@@ -153,6 +157,7 @@ if PLATFORM.startswith(LINUX):
 
     if xmode_override is not None:
         XMODE = xmode_override
+        LINUX_XMODE_REQUESTED = True
 
     if gui_override is not None:
         LINUX_USE_CLI_UI = not gui_override
