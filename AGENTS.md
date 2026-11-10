@@ -7,11 +7,12 @@ request — exclude it (and this commit) when opening one.
 - Upstream: `Sathvik-Rao/ClipCascade` = remote **`upstream`** (https://github.com/Sathvik-Rao/ClipCascade.git)
 - This fork: `tychart/ClipCascade` = remote **`origin`**, working branch
   `fix/desktop-autologin-reliability`
-- Branch base after the 2026-11-03 migration: upstream `main` at `fd13b2b` (post-v3.4.1)
-- Earlier base: upstream `main` at `fed738e` (post-v3.3.1), before that 3.2.0-based `518ecf6`
-- Backup refs of pre-migration tips: local branch `backup/autologin-3.3.1` + local tag
-  `backup-autologin-331` (`15a8e10`), and `backup/autologin-3.2.0` + tag `backup-autologin-320`
-  (`518ecf6`)
+- Branch base after the 2026-11-09 migration: upstream `main` at `2f027d8` (post-v3.5.1)
+- Earlier bases: upstream `main` at `fd13b2b` (post-v3.4.1), `fed738e` (post-v3.3.1), before
+  that 3.2.0-based `518ecf6`
+- Backup refs of pre-migration tips: local branch `backup/autologin-3.4.1` + local tag
+  `backup-autologin-341` (`bf1df58`), `backup/autologin-3.3.1` + tag `backup-autologin-331`
+  (`15a8e10`), and `backup/autologin-3.2.0` + tag `backup-autologin-320` (`518ecf6`)
 
 Long-term goal: **upstream a PR that improves the Linux desktop client** (auto-login
 reliability, tray, fonts, packaging docs). See "Upstream PR plan" below before pushing.
@@ -31,11 +32,11 @@ systemd user unit.
 **These are separate concerns and are meant to be opened as separate upstream PRs** — see
 "Upstream PR plan" in §6 for the commit → PR mapping.
 
-Commit list on top of `fd13b2b` (all rebased, retitled to upstream's PR-title rules):
+Commit list on top of `2f027d8` (all rebased, retitled to upstream's PR-title rules):
 
 | Commit | Purpose |
 |---|---|
-| `fix(linux-gui): keep the session across restarts and slow networks` | startup retry, session probe, re-auth hook, REST timeouts, DATA `0600` |
+| `fix(linux-gui): keep the session across restarts and slow networks` | startup retry, session probe, re-auth hook, REST timeouts, DATA `0600`, storage-commit contract |
 | `fix(linux-gui): keep log history instead of truncating it on every start` | `RotatingFileHandler` (5 MiB × 2) |
 | `docs: add a systemd user unit for the Linux desktop client` | `ClipCascade_Desktop/contrib/systemd/clipcascade.service` + README |
 | `fix(linux-gui): warn when the tray falls back to the X11 backend` | detect `pystray` X11 fallback, log it, document PyGObject |
@@ -47,16 +48,22 @@ Commit list on top of `fd13b2b` (all rebased, retitled to upstream's PR-title ru
 | `fix(linux-gui): keep the xclip backend when the clipboard is empty` | no wl-paste focus stealing on GNOME, `--xmode` is honoured, empty clipboard is not "xclip is broken" |
 | `docs: document the GNOME Wayland clipboard fallback` | README clipboard table + systemd section, contrib unit notes |
 | `docs: update the fork notes after the clipboard backend fix` | this file (fork-only) |
+| `docs: plan the fork's fixes as separate upstream PRs` | this file (fork-only) |
+| `docs: update the fork notes for the 3.5.1 rebase` | this file (fork-only) |
 
 ---
 
 ## 2. Ground rules for agents working here
 
 1. **Upstream is authoritative.** When a local patch and upstream disagree, prefer upstream's
-   behaviour and adapt (or drop) the local patch. The user explicitly asked for this: "keep as
-   much native as possible… use as much of the official code as possible". Two local changes
-   were **deleted** during the 3.3.1 migration because upstream had implemented them better
-   (see §3).
+   behaviour and adapt (or drop) the local patch. The user explicitly asked for this, twice:
+   "keep as much native as possible… use as much of the official code as possible" and "whenever
+   my version and the official version differ, always go to the official version unless there is
+   a good reason […] like to fix a known bug, as long as the official version didn't already fix
+   it". So this is a **per-hunk** rule, re-checked on every rebase: before "keeping" a patch,
+   prove upstream still has the bug. Two local changes were deleted during the 3.3.1 migration
+   and the DATA-permission write path was deleted during the 3.5.1 rebase for exactly this reason
+   (see §3); when in doubt, drop the patch and file the finding as an issue instead.
 2. **Never re-add per-manager reconnect code.** Everything reconnect-related goes through
    `utils/reconnect.py` (`ReconnectMixin`). The only local addition there is the
    `_before_reconnect()` hook.
@@ -64,8 +71,9 @@ Commit list on top of `fd13b2b` (all rebased, retitled to upstream's PR-title ru
    intended to be PR-able.
 4. **Don't "fix" the `save_password` security stance.** Upstream deliberately drops the stored
    password hash when encryption is enabled. This branch used to allow it; that feature was
-   removed (§3). Reintroducing it needs an explicit decision because the SHA3-512 hash is
-   password-equivalent.
+   removed (§3.2). Reintroducing it needs an explicit decision because the SHA3-512 hash is
+   password-equivalent. 3.5.1's `use_keyring` does not change that: it moves the *same* secrets
+   into the OS store instead of `DATA`, and the fork does not intercept that choice.
 5. Run the checks in §7 before claiming the branch works. There is no upstream test suite for
    the desktop client.
 6. **Keep the fixes separable.** They are reviewed and merged as *separate* upstream PRs (§6),
@@ -75,7 +83,105 @@ Commit list on top of `fd13b2b` (all rebased, retitled to upstream's PR-title ru
 
 ---
 
-## 3. Migration record: latest rebase onto upstream 3.4.1 (`fd13b2b`)
+## 3. Migration records
+
+### 3.1 Latest rebase: upstream 3.5.1 (`2f027d8`, 2026-11-09)
+
+Two upstream commits landed between `fd13b2b` and `2f027d8`: the big
+`feat(all): improve clipboard sync, credential storage, and server security (#190)` (3.5.0)
+and `fix(android): preserve connection status after image and file sharing (#191)` (3.5.1).
+Per-file outcome of re-applying this branch onto them:
+
+| File / area | Local change | Result after the 3.5.1 rebase |
+|---|---|---|
+| `core/application.py` (login flow: `_has_saved_credentials`, `_apply_login`, `_connect_with_stored_session`, `_login_interactively`, `_show_login_success_dialog`, `_refresh_session`) | refactor of `authenticate_and_connect()` | **Kept, re-fitted to 3.5.1's storage-commit contract.** 3.5.1 made `authenticate_and_connect()` return "the user logged in through the form", because `run()` now ends with `config.save(commit_storage=manual_login)`: a *pending* "Use OS credential storage" choice may only be applied after a manual login. So `_login_interactively()` returns `True`, the stored-session and saved-credentials paths return `False`, and **`_apply_login()` no longer saves** (it used to). The callers persist: `run()` once at startup, and `_refresh_session()` with `commit_storage=False` after a silent re-auth. `_apply_login()` still clears `password` when encryption is on or "Store Password Locally" is off, and still wraps everything in `try/except` so a malformed server response cannot crash the app. |
+| `core/application.py` (startup retry + `session_is_valid()` probe) | retry loop with capped backoff, `/csrf-token` probe | **Kept unchanged.** The probe is still an authentication check on 3.5.1: `SecurityConfiguration` permits only `/login,/logout,/signup,/captcha,/help,/donate,/health,/ping,/assets/**`. 3.5.1's `API.md` now documents `/validate-session` as *the* auth check — do **not** switch to it: it is newer than the client's oldest supported servers, and a `404` would be reported as `None` ("unknown"), i.e. the client would retry a dead cookie forever instead of showing the login form. |
+| `core/config.py` (DATA permissions) | chmod after save + tighten on load | **Reduced back to upstream, then kept as load-only.** 3.5.1 already writes DATA through a `NamedTemporaryFile` (created 0600) + `os.replace`, so files this client writes are private and the old *write-path* chmod was dead code — deleted. Only the `load()` tightening remains, for `DATA` files written by 3.2.x/3.3.x with a plain `open(..., "w")` (0644 under the usual umask), which otherwise stay world-readable until a save succeeds — and never become private when saving is impossible (locked credential store, read-only install). |
+| `utils/request_manager.py` (`session_is_valid`, explicit REST timeouts) | `Optional[bool]` probe, `REQUEST_TIMEOUT` defaults | **Kept** as-is; 3.5.1 only added `binary_recipients()`. |
+| `utils/reconnect.py` (`_before_reconnect`) | relogin hook before every retry | **Kept**; `ReconnectMixin` and `TransportManager` were not touched by 3.5.1, so the hook is still the only relogin path. |
+| `gui/login.py`, `gui/info.py` (fonts) | `ui_font(...)` everywhere | **Kept, no new work needed.** The 3.5.1 widgets (keyring checkbox, `STORAGE_HELP` tooltip, dialog `actions` buttons, Return handler) pass no `font=` of their own and inherit the styles the patch already configures. Upstream still hardcodes `Helvetica`/`Arial` **16×** in `gui/login.py` and **6×** in `gui/info.py`. |
+| `clipboard/clipboard_manager.py` (backend choice) | `LINUX_XMODE_REQUESTED or is_x_clipboard_owner()` | **Kept, conflict-free.** 3.5.1 rewrote the manager (update worker, CCB1 binary, raw image bytes, `prepare_clipboard()`), but the backend selection is untouched: `is_x_clipboard_owner()` is still computed in `__init__` and still gates `xclip` vs `wl-copy` in both paste paths. |
+| `clipboard/clipboard_monitor_linux.py` (probe, `LINUX_XMODE_REQUESTED`, log wording) | "no owner" counts as usable; probe retries | **Kept** exactly as written; upstream did not edit this file. |
+| `utils/fonts.py`, `gui/tray.py`, `contrib/systemd/*`, README (uv/systemd/tray/logs/GNOME) | new files / sections | **Kept**, applied cleanly (auto-merged). The systemd unit gained a note about the 3.5.1 keyring race: `graphical-session.target` can precede the Secret Service, and the client then offers Retry/Sign in/Exit. |
+| `pyproject.toml`, `requirements_linux_gui.txt` | `requires-python >=3.9`, `tray` extra, `PyGObject` | **Kept after upstream's new lines**: `keyring` (with a `<3.9` pin) and the per-version Pillow pins now come first. Upstream still declares `requires-python = ">=3.8"`; the `>=3.9` bump stays in the fork's docs commit. |
+
+Traps from this rebase (worth repeating):
+
+- Both Python conflicts were at seams 3.5.1 **renamed** (`authenticate_and_connect()`'s return
+  value, `_save_data()` → `_write_data_file()` + credential store). Re-resolve by reading the
+  new call graph, never by replaying the old diff.
+- `git add -A` during `rebase --continue` re-added `uv.lock` and `clipcascade.lock`, because
+  their `.gitignore` entries land in a *later* commit of this branch. Fix it with an
+  interactive `edit` on the first commit + `git rm --cached`, and stage explicit paths from
+  now on. (`AGENTS.md` §5 warns about this; it happened again.)
+- 4 conflicting files in total (`core/application.py` ×2 hunks, `core/config.py` ×2,
+  `utils/request_manager.py`, `requirements_linux_gui.txt`). Everything else auto-merged —
+  still diff those auto-merged files against `upstream/main` (fonts, clipboard, README) instead
+  of trusting the rebase.
+- `Config.save()` is now `save(*, commit_storage=False)`. Every call site must decide whether
+  it is applying a *choice*. `logoff_and_exit()` correctly keeps the default.
+
+#### 3.1.1 Upstream changes that matter for this work (3.4.1 → 3.5.1)
+
+Desktop:
+
+- **OS credential storage** (`use_keyring`, default off): `utils/secret_storage.py` (new) talks
+  only to the platform store (Windows Credential Manager, macOS Keychain, Linux Secret Service)
+  through `keyring` and raises rather than falling back to a plaintext backend. `Config` gains
+  `SECRET_FIELDS`, `secret_ref`, `credentials_use_keyring`, `credential_load_error` and the
+  `use_keyring` preference; DATA keeps preferences plus a `secret_ref` into one keyring entry
+  holding `{server_url, username, secrets}`. `save(*, commit_storage=False)` applies a pending
+  storage choice only when the caller reports a manual login, and returns `False` when it could
+  only store preferences (e.g. no keyring available).
+- **`Application.run()`**: `load_saved_config()` (new) → `authenticate_and_connect()` →
+  `config.save(commit_storage=manual_login)`, with a warning dialog when the login could not be
+  saved. `load_saved_config()` offers Retry/Sign in/Exit when saved credentials cannot be read
+  (`CustomDialog(actions=…)`, which is a numbered prompt in the CLI).
+- **Clipboard pipeline rewrite**: `clipboard/update_worker.py` (debounce + supersede in-flight
+  encodes), `utils/binary_protocol.py` (CCB1), `utils/transfer_limits.py`,
+  `utils/transfer_flow.py`, `utils/clipboard_echoes.py`, `utils/relay_recipients.py` and
+  `RequestManager.binary_recipients()` (`/clipbinary/recipients`).
+  `ClipboardManager.clipboard_to_base64()` became `prepare_clipboard()`, `hash_clipboard()`
+  hashes the wire representation via a `kind` argument, images travel as raw bytes, and
+  `get_loading_status()` feeds the tray label.
+- `STOMPManager` / `P2PManager` gained the binary/limit/echo plumbing (`x-clipcascade-*`
+  headers, per-connection `RelayRecipients`, transfer generations). **`ReconnectMixin` and
+  `TransportManager` were not touched.**
+- `clipboard_limit_display` preserves the amount/unit the user typed
+  (`format_clipboard_limit(value, display)`); `gui/info.CustomDialog` gained `actions`/`result`,
+  and Return now invokes the focused button.
+- Dependencies: `keyring` added to every requirements file and `pyproject.toml`; Pillow pinned
+  per Python version (`<3.9`, `==3.9`, `==3.10`, `>=3.11`). `APP_VERSION` is `3.5.0` — only the
+  Android artifact is `3.5.1` in `version.json`.
+
+Server:
+
+- `P2SDeliveryService` replaces the direct `SimpMessagingTemplate` send, plus
+  `BinaryClipboardController` + `/clipbinary/recipients`, stricter STOMP/P2P headers, logout now
+  disconnecting that login's WebSockets (`LiveWebSocketService.disconnectLogin`),
+  `/admin/advance` redirecting to `/#advanced` with a fragment endpoint,
+  `/admin/default-password-status`, a `HashingUtility` change and a rewritten `API.md` (binary
+  protocol, authentication, session validation).
+
+#### 3.1.2 What is still a genuine local delta (checked against `2f027d8`)
+
+Every remaining difference was re-verified against 3.5.1. If one of these stops being true,
+**delete the fork's version instead of keeping it** (rule §2.1).
+
+| Fork delta | Why upstream still has the bug |
+|---|---|
+| Startup retry + `/csrf-token` probe + relogin hook (`core/application.py`, `utils/reconnect.py`, `utils/request_manager.py`) | `ReconnectMixin` only starts retrying once `is_login_phase` is cleared, so the *first* connect still falls through to the login form; nothing probes session validity before re-login. |
+| `REQUEST_TIMEOUT` defaults on `RequestManager.get()/post()` | Upstream still declares `timeout=None`, so login/metadata can hang forever. |
+| Websocket "goodbye" log filter | Not upstream; every failed attempt still logs an ERROR line from `websocket-client`. |
+| Log rotation (`RotatingFileHandler`, 5 MiB × 2) | `setup_logging()` still opens the log with `filemode="w"` and truncates it on every start; no `LOG_FILE_*` constants upstream. |
+| Runtime UI fonts (`utils/fonts.py`) | `gui/login.py` still hardcodes `Helvetica` 16× and `gui/info.py` `Arial` 6×. |
+| Tray `HAS_MENU` warning (`gui/tray.py`) | Upstream still mounts `pystray._xorg.Icon` silently when PyGObject is missing. |
+| xclip backend / `--xmode` honouring (`clipboard/*`) | `is_x_clipboard_owner()` still counts "no owner for the CLIPBOARD selection" as a broken backend, which switches GNOME/Wayland to focus-stealing `wl-paste` polling; 3.5.1 did not touch the probe or the selection logic. |
+| `requires-python >=3.9`, `tray` extra, `PyGObject` line | Upstream still declares `>=3.8` while pinning `aiortc==1.10.0` (needs >=3.9), and has no PyGObject/`tray` extra. |
+| README (uv install), `contrib/systemd/clipcascade.service` | Additive: upstream has no `uv` path and no systemd unit. |
+| **Dropped on 2026-11-09** | the write-path `DATA` chmod (3.5.1's tempfile+`os.replace` already yields `0600`) |
+
+### 3.2 Previous migration: 3.4.1 (`fd13b2b`)
 
 Per-file outcome of the 2026-11-03 rebase from `fed738e` (3.3.1) to `fd13b2b` (3.4.1).
 "Upstream" means the local patch was dropped because 3.4.x already implements the intent.
@@ -110,7 +216,7 @@ Everything below was re-applied by hand onto the rewritten files, not by automat
 | `utils/fonts.py` | new file | **Kept** (upstream has none). |
 | `clipboard/clipboard_monitor_linux.py`, `clipboard/clipboard_manager.py` (backend choice) | `is_x_clipboard_owner()` used as a one-shot "is xclip usable?" probe at startup | **Fixed.** xclip answers "no owner for the CLIPBOARD selection" when the clipboard is empty, which is the normal state right after login, and that used to switch the client to `wl-paste` for the rest of the session. On GNOME/Mutter (no `wlr-data-control`) `wl-paste` reads need keyboard focus, so every poll stole focus from the active window (closed bookmark menus / extension popups, interrupted typing). Now "no owner" counts as usable, `--xmode` is recorded (`LINUX_XMODE_REQUESTED`) and never overridden, the auto-detected path retries the probe (`_XCLIP_PROBE_ATTEMPTS` × 1 s) because XWayland may still be starting, and `clipboard_manager` writes with xclip when `--xmode` was explicit. |
 
-### Upstream changes that matter for this work (3.3.1 → 3.4.1)
+#### 3.2.1 Upstream changes (3.3.1 → 3.4.1)
 
 Desktop client:
 
@@ -142,7 +248,7 @@ Desktop client:
 - Still true from 3.3.x: `ReconnectMixin` jitter, STOMP client `Event` rewrite, update checker,
   lock-file rework, macOS AppKit loop.
 
-Previous migration (3.2.0 → 3.3.1, for background):
+### 3.3 Earlier: 3.3.1 (for background)
 
 - **`utils/reconnect.py` — `ReconnectMixin`** (new): one cancellable retry worker per manager,
   with ±25 % jitter around `RECONNECT_WS_TIMER` (`RECONNECT_WS_JITTER_RATIO`), `_connect_lock`,
@@ -218,10 +324,25 @@ Flow in `Application.run()` → `authenticate_and_connect()`. All connects go th
    dialog is shown here (not for the silent paths) and honours
    `hide_login_success_dialog` + "don't show again".
 
+`authenticate_and_connect()` returns whether step 3 ran, and 3.5.1's `run()` uses that as
+`config.save(commit_storage=manual_login)`:
+
+- `True` (form login) → a storage choice the user made in the form (`use_keyring`) is applied
+  now; the credentials move to/from the OS store and the old entry is deleted.
+- `False` (stored session or silent credentials) → only the refreshed cookie is written, and
+  the existing storage location (`Config.credentials_use_keyring`) is kept.
+
+`_apply_login()` deliberately does **not** save; it prepares the cookie, `csrf_token` and the
+encryption key and connects. Persisting is the caller's job: `run()` once at startup,
+`_refresh_session()` after a silent re-auth (see below). Do not move the save back into
+`_apply_login()`: it would write the credentials to the old location before the pending choice
+is committed.
+
 Later, when the connection drops, `ReconnectMixin._retry_loop()` calls `_before_reconnect()` →
 `Application._refresh_session()` → same probe, throttled to once per 60 s. If the session was
 rejected:
-- saved credentials available → re-login and reconnect silently;
+- saved credentials available → re-login, `config.save(commit_storage=False)` (worker thread:
+  never commit a storage choice there) and reconnect silently;
 - otherwise → notify once (tray "Logoff and Quit", then start again).
 
 Known limitation: when the session is rejected and nothing can re-login, the reconnect worker
@@ -233,6 +354,14 @@ callback, which is a bigger design change.
 encryption is enabled; the AES key in `hashed_password` is what makes auto-login unnecessary
 there. It sets `hashed_password` *before* connecting, because connecting installs the clipboard
 listeners and they need the key immediately.
+
+Since 3.5.1 the login may instead live in the OS credential store (`use_keyring`): DATA keeps a
+`secret_ref` and one keyring entry holds `server_url`, `username` and the four
+`Config.SECRET_FIELDS`. `Config.load()` therefore has three outcomes, and `run()` handles
+`False` through `load_saved_config()` (Retry / Sign in / Exit) instead of silently showing the
+login form: a fresh install (`credential_load_error is None`), a DATA file that cannot be read,
+and an unavailable/denied keyring (`credentials_use_keyring` tells the two apart). A failed
+*save* after a successful connect is only a warning dialog; the existing saved login is kept.
 
 Note that `_refresh_session()` runs on the retry worker and calls `connect()` itself after a
 successful re-login; the worker then calls `connect()` again, which is an idempotent no-op once
@@ -249,6 +378,13 @@ the manager is connected.
   the backend; `clipcascade.service` and the README document the Fedora build deps and
   `uv sync --extra tray`. Verify with `python -c "import pystray; print(pystray.Icon)"` →
   `pystray._appindicator.Icon`.
+- **Credential store**: `secret_storage.backend()` imports `keyring.backends.SecretService`
+  explicitly and rejects `priority <= 0`, so a missing or not-yet-startable Secret Service is
+  an error and never a plaintext fallback. Started from `graphical-session.target`, the keyring
+  may still be locked or absent: `get_password()` retries twice (1 s, 2 s) and the app then
+  shows the Retry/Sign in/Exit dialog. That is a real consequence of the fork's early startup,
+  so `clipcascade.service` documents it. `keyring` is a hard dependency in every requirements
+  file and in `pyproject.toml` (not in the `tray` extra).
 - **Wayland clipboard**: the Wayland monitor also imports `gi`; without it the client logs
   `Failed to start clipboard monitor` and polls XWayland (`--xmode true`).
 - **Clipboard backend**: an XWayland session gets xclip, which reads and writes the Wayland
@@ -269,9 +405,10 @@ the manager is connected.
   startup retry. The systemd unit deliberately has no `After=network-online.target`; the client
   copes on its own.
 - **Runtime artifacts** in `ClipCascade_Desktop/src/` when running from source: `DATA`
-  (`0600`), `clipcascade_log.log`, `clipcascade.lock`, `uv.lock` — all git-ignored. Don't
-  `git add -A` that directory (this happened once during the migration and put an empty
-  `clipcascade.lock` into a commit).
+  (`0600`), `clipcascade_log.log`, `clipcascade.lock`, `uv.lock` — all git-ignored. `uv sync`
+  also creates `ClipCascade.egg-info/`, which is **not** ignored: delete it rather than commit it.
+  Don't `git add -A` that directory (this happened once during the 3.4.1 migration and again on
+  the 3.5.1 rebase, putting an empty `clipcascade.lock` and a 2163-line `uv.lock` into a commit).
 
 ---
 
@@ -281,16 +418,19 @@ the manager is connected.
   `main` is a fast-forward of `upstream/main` and is pushed to `origin/main`.
 - Rebase with `git rebase --onto upstream/main <old-base> fix/desktop-autologin-reliability`, or
   `git rebase upstream/main` while checked out.
-- **Conflict hot spots** (expect all five on a large upstream change):
+- **Conflict hot spots** (expect all of these on a large upstream change):
   1. `core/application.py` — upstream keeps editing `authenticate_and_connect()`, `run()` and now
-     `TransportManager` wiring. Re-resolve by *reading the new flow*, not by replaying the diff.
-  2. `gui/login.py` — upstream reworks labels/tooltips/layout; re-apply `ui_font(...)` to any new
+     the `manual_login` / `config.save(commit_storage=…)` contract. Re-resolve by *reading the
+     new call graph*, not by replaying the diff.
+  2. `core/config.py` — 3.5.1 split `_save_data()` into `_write_data_file()` + the credential
+     store. The `0600` chmod belongs in the writer; `_saved_data` belongs to `_save_data()`.
+  3. `gui/login.py` — upstream reworks labels/tooltips/layout; re-apply `ui_font(...)` to any new
      `font=` argument (a regex over `("Helvetica", n)` / `("Arial", n[, "bold"])` is fastest).
-  3. `gui/info.py` — upstream renamed the ttk styles (`TLabel` → `Dialog.TLabel`); the font patch
-     has to follow the new names and the new `on_dont_show_again` parameter.
-  4. `README.md` — upstream rewrites the Linux install, reverse-proxy and advanced-settings
+  4. `gui/info.py` — upstream renamed the ttk styles (`TLabel` → `Dialog.TLabel`) and added
+     `actions`/`on_dont_show_again`; the font patch has to follow both.
+  5. `README.md` — upstream rewrites the Linux install, reverse-proxy and advanced-settings
      sections; re-anchor the uv/systemd/tray/log sections by heading, not by line.
-  5. `pyproject.toml` / `requirements_linux_gui.txt` — keep upstream pins, add the `tray` extra and
+  6. `pyproject.toml` / `requirements_linux_gui.txt` — keep upstream pins, add the `tray` extra and
      `PyGObject` line after them.
 - Before rebasing, create a safety ref: `git branch backup/<name> HEAD` and, if the branch is
   published, push it. The branch is force-pushed after a rebase (`--force-with-lease` is
@@ -300,18 +440,18 @@ the manager is connected.
 
 ### Upstream PR plan
 
-The local commits are **five independent fixes** plus two fork-only doc commits. Do not open one giant PR: each item below is
+The local commits are **five independent fixes** plus fork-only `AGENTS.md` doc commits. Do not open one giant PR: each item below is
 a self-contained change that upstream can review and release on its own (the user explicitly
-wants separate PRs). Two commits are fork-only (`AGENTS.md`) and must never be included.
+wants separate PRs). The `AGENTS.md` commits are fork-only and must never be included.
 
 | # | PR title (= commit subject, PR-title grammar) | Commits to cherry-pick | Notes |
 |---|---|---|---|
-| 1 | `fix(linux-gui): keep the session across restarts and slow networks` | `keep the session across restarts…` | Release-relevant. Touches `core/application.py`, `core/config.py`, `core/constants.py`, `utils/reconnect.py`, `utils/request_manager.py`. Explain in the body that 3.4.0's `TransportManager` owns the retry worker, so the re-auth hook lives on `ReconnectMixin` (`_before_reconnect`), **not** on `interfaces/ws_interface.py` — reviewers will look for the old interface addition otherwise. |
+| 1 | `fix(linux-gui): keep the session across restarts and slow networks` | `keep the session across restarts…` | Release-relevant. Touches `core/application.py`, `core/config.py`, `core/constants.py`, `utils/reconnect.py`, `utils/request_manager.py`. Explain in the body that 3.4.0's `TransportManager` owns the retry worker, so the re-auth hook lives on `ReconnectMixin` (`_before_reconnect`), **not** on `interfaces/ws_interface.py` — reviewers will look for the old interface addition otherwise. Also spell out the `commit_storage` contract: `authenticate_and_connect()` returns "the form was used", `_apply_login()` never saves, `_refresh_session()` saves with `commit_storage=False`, and the `/csrf-token` probe stays (not `/validate-session`) so older servers keep working. |
 | 2 | `fix(linux-gui): keep the xclip backend when the clipboard is empty` | `keep the xclip backend when the clipboard is empty` + `docs: document the GNOME Wayland clipboard fallback` | Independent of everything else. Touches `clipboard/clipboard_monitor_linux.py`, `clipboard/clipboard_manager.py`, `core/constants.py` (`LINUX_XMODE_REQUESTED`), README + contrib unit. Body: an empty clipboard at login is normal and used to look like "xclip is broken"; the wl-paste fallback needs keyboard focus on Mutter and closed bookmark menus / extension popups. |
-| 3 | `fix(linux-gui): resolve UI fonts at runtime and report a tray without a menu` | `resolve UI fonts at runtime…`, `honour pixel-sized UI fonts`, `warn when the tray falls back to the X11 backend` | Can be split again into "fonts" and "tray warning" if upstream prefers; both are tiny. Touches `utils/fonts.py` (new), `gui/login.py`, `gui/info.py`, `gui/tray.py`. |
+| 3 | `fix(linux-gui): resolve UI fonts at runtime and report a tray without a menu` | `resolve UI fonts at runtime…`, `honour pixel-sized UI fonts`, `warn when the tray falls back to the X11 backend` | Can be split again into "fonts" and "tray warning" if upstream prefers; both are tiny. Touches `utils/fonts.py` (new), `gui/login.py`, `gui/info.py`, `gui/tray.py`. Since 3.5.1 the new widgets (keyring checkbox, `STORAGE_HELP` tooltip, dialog `actions` buttons) inherit the configured styles, so the patch needs no per-widget additions — say that in the body. |
 | 4 | `fix(linux-gui): keep log history instead of truncating it on every start` | `keep log history…` | Smallest fix; `RotatingFileHandler` 5 MiB × 2, `LOG_FILE_*` constants. |
-| 5 | `docs: document a uv install and a systemd user unit for the Linux client` | `docs: add a systemd user unit…`, `docs: document a uv-native install…`, `chore: ignore local lock files…` | Non-releasing (`docs:`/`chore:` **must not** have a scope), so it will not trigger a release. Carries the shared-metadata edits (`requires-python >=3.9`, `tray` extra, `PyGObject` line) — decide explicitly whether those belong in this PR or in their own `build:`/`chore:` one. |
-| — | *(never)* | `docs: record the fork's divergence…`, `docs: update the fork notes…` | Fork-only; `AGENTS.md` must stay out of every PR. |
+| 5 | `docs: document a uv install and a systemd user unit for the Linux client` | `docs: add a systemd user unit…`, `docs: document a uv-native install…`, `chore: ignore local lock files…` | Non-releasing (`docs:`/`chore:` **must not** have a scope), so it will not trigger a release. Carries the shared-metadata edits (`requires-python >=3.9`, `tray` extra, `PyGObject` line) — decide explicitly whether those belong in this PR or in their own `build:`/`chore:` one. Since 3.5.1, `keyring` and the per-version Pillow pins are upstream's own, so this PR only adds `requires-python >=3.9`, the `tray` extra and `PyGObject`. |
+| — | *(never)* | `docs: record the fork's divergence…`, `docs: update the fork notes after the clipboard backend fix`, `docs: plan the fork's fixes…`, `docs: update the fork notes for the 3.5.1 rebase` | Fork-only; `AGENTS.md` must stay out of every PR. |
 
 Mechanics:
 
@@ -328,9 +468,10 @@ git push origin fix/xclip-backend
 - Each PR **Description** becomes the GitHub release notes: user-facing bullets, no
   implementation detail, and the scopes must list every changed platform. Per-PR bullets:
   - **PR 1:** no login form while the network is still coming up; sessions are refreshed
-    automatically when a password is stored; the stored session is only re-used while its
-    encryption key is present; REST calls and the stored `DATA` file are safer (timeouts,
-    `0600`).
+    automatically when a password is stored; a new "use OS credential storage" choice only takes
+    effect after a manual login; the stored session is only re-used while its encryption key is
+    present; REST calls no longer hang (timeouts), and a `DATA` file left world-readable by
+    older versions is tightened on load.
   - **PR 2:** the tray no longer loses keyboard focus every few seconds on GNOME/Wayland
     (clipboard polling no longer pulls focus); an explicit `--xmode` is always respected.
   - **PR 3:** the tray icon reports when PyGObject is missing (it had no menu at all in that
@@ -348,16 +489,15 @@ git push origin fix/xclip-backend
 
 ## 7. Verification (no upstream desktop test suite)
 
-Environment used for the 2026-11-03 migration: `ClipCascade_Desktop/src/.venv`
-(Python 3.12.13), managed with `uv` and now refreshed to 3.4.1's dependency set
-(`uv sync --extra tray` pulled `prompt-toolkit`, `pyfiglet`, Pillow 12, PyGObject 3.58.1…).
-`python3` on the host is 3.14 and has none of the deps. `gi`/PyGObject and
-`pystray._appindicator.Icon` are present, and a display is available (`DISPLAY=:0`;
-`xrandr` is missing, which only produces a harmless monitor-size warning). The desktop is
-**GNOME 51 on Wayland/Mutter** (`XDG_SESSION_TYPE=wayland`, `DISPLAY=:0`, so
-`detect_linux_display_server()` says `XWayland` and `XMODE` defaults to `True`), with the
-`clipboard-indicator` and `appindicatorsupport` extensions enabled — that is the exact setup
-the xclip backend exists for.
+Environment: `ClipCascade_Desktop/src/.venv` (Python 3.12.13), managed with `uv`. Refresh it
+after every rebase: `uv sync --extra tray` (3.5.1 resolves **88** packages and adds `keyring`
+25.7.0, `secretstorage`, `jeepney`, `jaraco-*` and Pillow 13.0.0). `python3` on the host is 3.14
+and has none of the deps. `gi`/PyGObject and `pystray._appindicator.Icon` are present, and a
+display is available (`DISPLAY=:0`; `xrandr` is missing, which only produces a harmless
+monitor-size warning). The desktop is **GNOME 51 on Wayland/Mutter** (`XDG_SESSION_TYPE=wayland`,
+`DISPLAY=:0`, so `detect_linux_display_server()` says `XWayland` and `XMODE` defaults to `True`),
+with the `clipboard-indicator` and `appindicatorsupport` extensions enabled — that is the exact
+setup the xclip backend exists for.
 
 Static:
 
@@ -366,7 +506,7 @@ cd ClipCascade_Desktop/src
 .venv/bin/python -m compileall -q -x '\.venv' .
 .venv/bin/python -c "import core.application; print('ok')"   # imports the GUI path + p2p/aiortc
 .venv/bin/python -c "import cli.login, cli.tray; print('ok')"  # Linux CLI needs pyfiglet/prompt_toolkit
-.venv/bin/python -c "import utils.reconnect, utils.fonts, utils.request_manager, utils.transport_manager; print('ok')"
+.venv/bin/python -c "import utils.reconnect, utils.fonts, utils.request_manager, utils.transport_manager, utils.secret_storage; print('ok')"
 git grep -n "<<<<<<<\|>>>>>>>" -- '*.py' ':!*.venv*'          # must be empty
 ```
 
@@ -376,8 +516,36 @@ Dependency resolution (needs network):
 cd ClipCascade_Desktop/src && uv sync --extra tray --dry-run   # expect "Resolved NN packages"
 ```
 
-Behavioural checks that were run (recreate them if needed; the harness was ad-hoc and is not
-committed):
+Behavioural checks added for the 3.5.1 rebase (2026-11-09, all green; the harnesses were
+ad-hoc, in `/tmp`, not committed):
+
+- `Config` against a **stubbed** `secret_storage.backend()` (dict-backed, so no DBus needed):
+  `save(commit_storage=False)` writes plain DATA at `0600` with a base64 `hashed_password` and
+  no `secret_ref` (the mode comes from upstream's tempfile — the fork no longer chmods after a
+  save); `save(commit_storage=True)` with `use_keyring` writes a `secret_ref`, no secrets in
+  DATA, `0600`, exactly one keyring entry; `load()` restores the secrets and reports
+  `credentials_use_keyring`; a *pending* choice (`data["use_keyring"]` flipped without a manual
+  login) is **not** committed by `save(commit_storage=False)` and does not create a second
+  entry. A pre-existing `0644` DATA is tightened by `load()` in both modes; no temp files left.
+- `_apply_login()` succeeds **without calling `config.save()`**; `_refresh_session()` saves
+  exactly once with `commit_storage=False` after a silent re-login, is throttled to
+  `SESSION_PROBE_MIN_INTERVAL` (no second probe/login inside the window), and a rejected session
+  without saved credentials notifies once, never re-logs-in, and returns `False`.
+- `authenticate_and_connect()` returns `False` for the stored-session and saved-credentials
+  paths and `True` for the form; a rejected stored session tries the saved credentials exactly
+  once before opening the form.
+- GUI (real display, after the 3.5.1 rewrite): `ui_font(13)` still resolves to
+  `liberation sans`; `LoginForm` constructs and its `use_keyring_var`/`use_keyring_checkbox`
+  exist; `CustomDialog(actions=[("Retry", …), ("Sign in", …)])` builds both buttons; the style
+  list below still resolves to that family.
+- Tray warning (`TaskbarPanel.warn_if_tray_menu_is_unavailable`): a `HAS_MENU = False` icon logs
+  the error naming the backend; `HAS_MENU = True` logs nothing.
+- Clipboard probe (patched `execute_command`): readable `TARGETS` → `True`; `"no owner for the
+  CLIPBOARD selection"` → `True`; `"Can't open display"` → `False`;
+  `"cannot convert … selection to target"` → `False` (the empty-clipboard case is the only one
+  treated as usable; the transient one is retried by `_xclip_is_available()`).
+
+Behavioural checks from the 3.4.1 run (still valid; rerun anything a patch touches):
 
 - `RequestManager.session_is_valid()` against a real local HTTP server: `200` → `True`;
   `302`/`401` → `False`; `500` → `None`; connection refused → `None`; no cookie → `False`; a
@@ -389,9 +557,10 @@ committed):
 - `_connect_with_stored_session()` with a stub manager: 4 attempts when the server is
   unreachable, `True` once it connects, exactly one notification, `is_login_phase` cleared;
   a rejected session stops after 1 attempt and returns `False`.
-- `_apply_login()`: encryption on → `hashed_password` derived, `password` cleared, cookie saved,
-  still not auto-loginable; encryption off + `save_password` → hash kept and auto-loginable;
-  `save_password` off → hash cleared; a login failure is returned, not raised.
+- `_apply_login()`: encryption on → `hashed_password` derived, `password` cleared, cookie/token
+  stored in memory (persisted by `run()`, not by `_apply_login()`), still not auto-loginable;
+  encryption off + `save_password` → hash kept and auto-loginable; `save_password` off → hash
+  cleared; a login failure is returned, not raised.
 - `ReconnectMixin._before_reconnect()`: invokes `relogin_callback`, swallows exceptions, is a
   no-op without a callback, runs exactly once per retry attempt; `TransportManager` inherits the
   mixin and therefore exposes `set_relogin_callback()` (the interface patch is gone).
@@ -422,18 +591,21 @@ committed):
   and `wl-paste -n` reads it back (Mutter's X11↔Wayland bridge in both directions). The
   service must log `Clipboard backend: xclip` and never `Switching to wl-clipboard`.
 - End-to-end with a copied source tree and a `DATA` cookie pointing at a dead port: log shows
-  `retrying in 2s` → `4s` → `8s`, no login form, no crash — in GUI *and* CLI mode. Every retry
-  now starts with `server_discovery`, so a refused `/server-mode` is the first log line of each
-  attempt. A 302 stub makes the client log "The server rejected the stored session; a new login
-  is required" and open the login form once (no retry loop).
+  `retrying in 2s` → `4s` → `8s`, no login form, no crash — in GUI *and* CLI mode (re-verified
+  on 3.5.1 in CLI mode, `DATA` still `0600`). Every retry now starts with `server_discovery`, so
+  a refused `/server-mode` is the first log line of each attempt. A 302 stub makes the client
+  log "The server rejected the stored session; a new login is required" and open the login form
+  once (no retry loop).
 - Log rotation: two consecutive runs both appear in `clipcascade_log.log`; `DATA` ends up `0600`.
 
 Not verified live (needs a real ClipCascade server): STOMP/P2P reconnect after a server or
 reverse-proxy restart, the silent re-auth on a genuine session expiry, and the P2S ↔ P2P
 switch inside `TransportManager._connect_once()`. The hook, probe and
-retry paths are covered by stubs only. If Docker is available, the honest end-to-end test is a
-local server from `ClipCascade_Server/docker-compose/`, then restart it while the client is
-connected.
+retry paths are covered by stubs only. The OS credential store was only exercised against a
+stubbed `secret_storage.backend()`: a real Secret Service, a locked keyring after autologin and
+3.5.1's `load_saved_config()` recovery dialog are untested. If Docker is available, the honest
+end-to-end test is a local server from `ClipCascade_Server/docker-compose/`, then restart it
+while the client is connected.
 
 ---
 
@@ -448,6 +620,8 @@ cd ClipCascade_Desktop/src && .venv/bin/python main.py --gui true
 uv sync --extra tray
 # Verify the tray backend
 .venv/bin/python -c "import pystray; print(pystray.Icon)"
+# Verify the credential-store backend (3.5.1)
+.venv/bin/python -c "import utils.secret_storage as s; print(s.backend())"
 # Where runtime state lives when running from source
 ls -l ClipCascade_Desktop/src/{DATA,clipcascade_log.log,clipcascade.lock}
 ```
