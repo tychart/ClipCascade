@@ -50,6 +50,9 @@ Commit list on top of `2f027d8` (all rebased, retitled to upstream's PR-title ru
 | `docs: update the fork notes after the clipboard backend fix` | this file (fork-only) |
 | `docs: plan the fork's fixes as separate upstream PRs` | this file (fork-only) |
 | `docs: update the fork notes for the 3.5.1 rebase` | this file (fork-only) |
+| `fix(linux-gui): close the login form before the tray takes over the thread` | flush the buffered X requests in `GuiWindow.destroy()`; a successful login no longer leaves a frozen login form on screen |
+| `chore: ignore rotated log files` | `*.log.*` in `ClipCascade_Desktop/src/.gitignore` (the rotated `clipcascade_log.log.1`) |
+| `docs: update the fork notes for the login-window fix` | this file (fork-only) |
 
 ---
 
@@ -179,6 +182,7 @@ Every remaining difference was re-verified against 3.5.1. If one of these stops 
 | xclip backend / `--xmode` honouring (`clipboard/*`) | `is_x_clipboard_owner()` still counts "no owner for the CLIPBOARD selection" as a broken backend, which switches GNOME/Wayland to focus-stealing `wl-paste` polling; 3.5.1 did not touch the probe or the selection logic. |
 | `requires-python >=3.9`, `tray` extra, `PyGObject` line | Upstream still declares `>=3.8` while pinning `aiortc==1.10.0` (needs >=3.9), and has no PyGObject/`tray` extra. |
 | README (uv install), `contrib/systemd/clipcascade.service` | Additive: upstream has no `uv` path and no systemd unit. |
+| Window flush on destroy (`gui/tk_owner.py`) | `GuiWindow.destroy()` queues the X11 destruction, and Tk only flushes its request buffer when its event loop runs again. Upstream also destroys the login form and then hands the main thread to the tray loop, so on Linux/GNOME the form stays on screen — frozen — after a successful login (visible whenever `hide_login_success_dialog` is set, because then no dialog runs a Tk loop in between). |
 | **Dropped on 2026-11-09** | the write-path `DATA` chmod (3.5.1's tempfile+`os.replace` already yields `0600`) |
 
 ### 3.2 Previous migration: 3.4.1 (`fd13b2b`)
@@ -404,6 +408,11 @@ the manager is connected.
 - **Startup ordering**: `graphical-session.target` is reached before networking, hence the
   startup retry. The systemd unit deliberately has no `After=network-online.target`; the client
   copes on its own.
+- **The tray owns the main thread**: `TaskbarPanel.run()` hands the main thread to the tray's
+  loop (`pystray` → GTK/AppIndicator). From that point Tk dispatches nothing of its own, so a Tk
+  window left over from startup is visible but permanently unresponsive — that is exactly what a
+  "hung login dialog" looked like while the client was in fact logged in and syncing. Dialogs
+  opened from the tray still work because they run their own `tkwait` loop on the main thread.
 - **Runtime artifacts** in `ClipCascade_Desktop/src/` when running from source: `DATA`
   (`0600`), `clipcascade_log.log`, `clipcascade.lock`, `uv.lock` — all git-ignored. `uv sync`
   also creates `ClipCascade.egg-info/`, which is **not** ignored: delete it rather than commit it.
@@ -440,7 +449,7 @@ the manager is connected.
 
 ### Upstream PR plan
 
-The local commits are **five independent fixes** plus fork-only `AGENTS.md` doc commits. Do not open one giant PR: each item below is
+The local commits are **six independent fixes** plus fork-only `AGENTS.md` doc commits. Do not open one giant PR: each item below is
 a self-contained change that upstream can review and release on its own (the user explicitly
 wants separate PRs). The `AGENTS.md` commits are fork-only and must never be included.
 
@@ -449,9 +458,10 @@ wants separate PRs). The `AGENTS.md` commits are fork-only and must never be inc
 | 1 | `fix(linux-gui): keep the session across restarts and slow networks` | `keep the session across restarts…` | Release-relevant. Touches `core/application.py`, `core/config.py`, `core/constants.py`, `utils/reconnect.py`, `utils/request_manager.py`. Explain in the body that 3.4.0's `TransportManager` owns the retry worker, so the re-auth hook lives on `ReconnectMixin` (`_before_reconnect`), **not** on `interfaces/ws_interface.py` — reviewers will look for the old interface addition otherwise. Also spell out the `commit_storage` contract: `authenticate_and_connect()` returns "the form was used", `_apply_login()` never saves, `_refresh_session()` saves with `commit_storage=False`, and the `/csrf-token` probe stays (not `/validate-session`) so older servers keep working. |
 | 2 | `fix(linux-gui): keep the xclip backend when the clipboard is empty` | `keep the xclip backend when the clipboard is empty` + `docs: document the GNOME Wayland clipboard fallback` | Independent of everything else. Touches `clipboard/clipboard_monitor_linux.py`, `clipboard/clipboard_manager.py`, `core/constants.py` (`LINUX_XMODE_REQUESTED`), README + contrib unit. Body: an empty clipboard at login is normal and used to look like "xclip is broken"; the wl-paste fallback needs keyboard focus on Mutter and closed bookmark menus / extension popups. |
 | 3 | `fix(linux-gui): resolve UI fonts at runtime and report a tray without a menu` | `resolve UI fonts at runtime…`, `honour pixel-sized UI fonts`, `warn when the tray falls back to the X11 backend` | Can be split again into "fonts" and "tray warning" if upstream prefers; both are tiny. Touches `utils/fonts.py` (new), `gui/login.py`, `gui/info.py`, `gui/tray.py`. Since 3.5.1 the new widgets (keyring checkbox, `STORAGE_HELP` tooltip, dialog `actions` buttons) inherit the configured styles, so the patch needs no per-widget additions — say that in the body. |
-| 4 | `fix(linux-gui): keep log history instead of truncating it on every start` | `keep log history…` | Smallest fix; `RotatingFileHandler` 5 MiB × 2, `LOG_FILE_*` constants. |
+| 4 | `fix(linux-gui): keep log history instead of truncating it on every start` | `keep log history…` + `chore: ignore rotated log files` | Smallest fix; `RotatingFileHandler` 5 MiB × 2, `LOG_FILE_*` constants. The `chore:` commit only ignores `*.log.*` (the rotated file the fix creates), so it must be cherry-picked with this one rather than opened separately. |
 | 5 | `docs: document a uv install and a systemd user unit for the Linux client` | `docs: add a systemd user unit…`, `docs: document a uv-native install…`, `chore: ignore local lock files…` | Non-releasing (`docs:`/`chore:` **must not** have a scope), so it will not trigger a release. Carries the shared-metadata edits (`requires-python >=3.9`, `tray` extra, `PyGObject` line) — decide explicitly whether those belong in this PR or in their own `build:`/`chore:` one. Since 3.5.1, `keyring` and the per-version Pillow pins are upstream's own, so this PR only adds `requires-python >=3.9`, the `tray` extra and `PyGObject`. |
-| — | *(never)* | `docs: record the fork's divergence…`, `docs: update the fork notes after the clipboard backend fix`, `docs: plan the fork's fixes…`, `docs: update the fork notes for the 3.5.1 rebase` | Fork-only; `AGENTS.md` must stay out of every PR. |
+| 6 | `fix(linux-gui): close the login form before the tray takes over the thread` | `close the login form before the tray…` | One file (`gui/tk_owner.py`), independent of everything else. Reproduced on GNOME/Wayland (Mutter, XWayland): a successful login left the login form on screen and unresponsive while the client was connected and in the tray. Scope is `linux-gui`, not `desktop`: the leak is Xlib request buffering, so Windows/macOS (where `destroy()` is synchronous) are unaffected and the added flush is a no-op there. Suggested body: Tk buffers X requests and flushes them on the next event-loop pass, which never comes once the tray owns the thread, so `GuiWindow.destroy()` now flushes with an idle pass. |
+| — | *(never)* | `docs: record the fork's divergence…`, `docs: update the fork notes after the clipboard backend fix`, `docs: plan the fork's fixes…`, `docs: update the fork notes for the 3.5.1 rebase`, `docs: update the fork notes for the login-window fix` | Fork-only; `AGENTS.md` must stay out of every PR. |
 
 Mechanics:
 
@@ -478,6 +488,8 @@ git push origin fix/xclip-backend
     case); UI text no longer shrinks to an unreadable bitmap font on Tk builds without Xft.
   - **PR 4:** logs are kept across restarts (rotated, 5 MiB × 2) instead of being truncated.
   - **PR 5:** a `uv` install path and a systemd user unit are documented.
+  - **PR 6:** after logging in, the login window disappears instead of staying on screen, frozen,
+    while the client is already running in the tray.
 - Checklist per PR: correct title grammar/scope, description filled in, tested locally on
   Linux (GUI **and** CLI), no `AGENTS.md`, no `DATA`/logs/locks/`uv.lock`, no secrets.
 - Decide explicitly whether `requires-python >=3.9` and the `tray` extra belong in PR 5; they
@@ -540,6 +552,12 @@ ad-hoc, in `/tmp`, not committed):
   list below still resolves to that family.
 - Tray warning (`TaskbarPanel.warn_if_tray_menu_is_unavailable`): a `HAS_MENU = False` icon logs
   the error naming the backend; `HAS_MENU = True` logs nothing.
+- Login window lifetime (2026-11-15, on the GNOME/Wayland session): with `_apply_login` stubbed
+  to return success and `hide_login_success_dialog` set (so no dialog runs a Tk loop), the login
+  form's X window keeps `map_state=viewable` after `authenticate_and_connect()` returns and the
+  tray owns the thread; with the `GuiWindow.destroy()` flush it is destroyed. Reproduced with the
+  real `Application.run()` path and a `mutex_identifier`/`DATA` in `/tmp`, so the running service
+  is untouched.
 - Clipboard probe (patched `execute_command`): readable `TARGETS` → `True`; `"no owner for the
   CLIPBOARD selection"` → `True`; `"Can't open display"` → `False`;
   `"cannot convert … selection to target"` → `False` (the empty-clipboard case is the only one
