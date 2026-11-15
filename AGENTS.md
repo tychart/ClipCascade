@@ -463,6 +463,23 @@ wants separate PRs). The `AGENTS.md` commits are fork-only and must never be inc
 | 6 | `fix(linux-gui): close the login form before the tray takes over the thread` | `close the login form before the tray…` | One file (`gui/tk_owner.py`), independent of everything else. Reproduced on GNOME/Wayland (Mutter, XWayland): a successful login left the login form on screen and unresponsive while the client was connected and in the tray. Scope is `linux-gui`, not `desktop`: the leak is Xlib request buffering, so Windows/macOS (where `destroy()` is synchronous) are unaffected and the added flush is a no-op there. Suggested body: Tk buffers X requests and flushes them on the next event-loop pass, which never comes once the tray owns the thread, so `GuiWindow.destroy()` now flushes with an idle pass. |
 | — | *(never)* | `docs: record the fork's divergence…`, `docs: update the fork notes after the clipboard backend fix`, `docs: plan the fork's fixes…`, `docs: update the fork notes for the 3.5.1 rebase`, `docs: update the fork notes for the login-window fix` | Fork-only; `AGENTS.md` must stay out of every PR. |
 
+Opened on 2026-11-15, from branches cut at `2f027d8` and pushed to `origin` (both **draft**, and
+both CI runs sit at `action_required` = upstream needs to approve the workflow for a first-time
+contributor):
+
+- **#192** = row 3 (fonts + tray warning). Branch `fix/linux-tray-fonts`. The tray commit had to be
+  re-cut for upstream: it changes `contrib/systemd/clipcascade.service` and the systemd README
+  section, and neither exists upstream (row 5's unit is fork-only). The PyGObject note now lives
+  in Step 3 of upstream's own Linux guide and the log message points there.
+- **#193** = row 6 (login window ghost). Branch `fix/linux-login-form-ghost`.
+
+Do **not** open row 2 (xclip backend) as-is: upstream PR #171 (`fix(linux): use xclip on X11
+regardless of clipboard ownership, in paste and monitor`, open since 2026-09-03) fixes the same
+bug, and #145 proposes a pywayland `ext-data-control` rewrite of Wayland clipboard handling. If
+row 2 is ever submitted, it has to be rebased onto 3.5.1, state what it adds over #171 (probe
+retries, `--xmode` honoured, empty clipboard not treated as broken) and be re-diffed against
+whatever lands first.
+
 Mechanics:
 
 ```bash
